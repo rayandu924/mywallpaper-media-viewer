@@ -1,6 +1,6 @@
 {
   "name": "Media Viewer",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "sdkVersion": "2.3.0",
   "description": "Universal media display widget supporting images, videos, GIFs, and video platforms (YouTube, Vimeo, Twitch, Dailymotion).",
   "author": "MyWallpaper Community",
@@ -28,7 +28,8 @@
       "default": "url",
       "options": [
         { "value": "url", "label": "Direct URL (Image/Video)" },
-        { "value": "file", "label": "Upload File" },
+        { "value": "file", "label": "Upload Image" },
+        { "value": "fileVideo", "label": "Upload Video" },
         { "value": "embed", "label": "Video Platform (YouTube, Vimeo...)" }
       ]
     },
@@ -41,11 +42,16 @@
       "showIf": { "setting": "sourceType", "equals": "url" }
     },
     "mediaFile": {
-      "type": "file",
-      "label": "Upload Media",
-      "description": "Upload a local image or video file (jpg, png, gif, webp, mp4, webm, mov)",
-      "accept": "image/*,video/*",
+      "type": "image",
+      "label": "Upload Image",
+      "description": "Upload a local image file (jpg, png, gif, webp, svg)",
       "showIf": { "setting": "sourceType", "equals": "file" }
+    },
+    "mediaVideo": {
+      "type": "video",
+      "label": "Upload Video",
+      "description": "Upload a local video file (mp4, webm, mov)",
+      "showIf": { "setting": "sourceType", "equals": "fileVideo" }
     },
     "embedUrl": {
       "type": "string",

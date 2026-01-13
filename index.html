@@ -358,6 +358,8 @@
         switch (settings.sourceType) {
           case 'file':
             return { type: 'direct', url: settings.mediaFile || null };
+          case 'fileVideo':
+            return { type: 'direct', url: settings.mediaVideo || null };
           case 'embed':
             return { type: 'embed', url: settings.embedUrl || null };
           case 'url':
@@ -371,7 +373,8 @@
 
         if (!source.url) {
           const messages = {
-            'file': 'No file uploaded',
+            'file': 'No image uploaded',
+            'fileVideo': 'No video uploaded',
             'embed': 'No video URL provided',
             'url': 'No URL configured'
           };
@@ -456,9 +459,10 @@
       api.onSettingsChange((settings, changedKeys) => {
         console.log('[MediaViewer] Settings changed:', changedKeys);
 
-        // Check if media source changed (URL, file, embed URL, or source type selector)
+        // Check if media source changed (URL, file, video file, embed URL, or source type selector)
         const mediaChanged = changedKeys.includes('mediaUrl') ||
                             changedKeys.includes('mediaFile') ||
+                            changedKeys.includes('mediaVideo') ||
                             changedKeys.includes('embedUrl') ||
                             changedKeys.includes('sourceType');
 
