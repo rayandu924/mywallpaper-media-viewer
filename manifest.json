@@ -1,8 +1,8 @@
 {
   "name": "Media Viewer",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "sdkVersion": "2.3.0",
-  "description": "Universal media display widget supporting images, videos, GIFs, and more. Perfect for displaying your favorite visuals on your desktop.",
+  "description": "Universal media display widget supporting images, videos, GIFs, and video platforms (YouTube, Vimeo, Twitch, Dailymotion).",
   "author": "MyWallpaper Community",
   "categories": ["media", "utilities", "display"],
   "icon": "icon.svg",
@@ -27,8 +27,9 @@
       "description": "Choose how to provide the media",
       "default": "url",
       "options": [
-        { "value": "url", "label": "URL (Web Link)" },
-        { "value": "file", "label": "Upload File" }
+        { "value": "url", "label": "Direct URL (Image/Video)" },
+        { "value": "file", "label": "Upload File" },
+        { "value": "embed", "label": "Video Platform (YouTube, Vimeo...)" }
       ]
     },
     "mediaUrl": {
@@ -45,6 +46,14 @@
       "description": "Upload a local image or video file",
       "showIf": { "setting": "sourceType", "equals": "file" }
     },
+    "embedUrl": {
+      "type": "string",
+      "label": "Video URL",
+      "description": "Paste a YouTube, Vimeo, Twitch, or Dailymotion link",
+      "default": "",
+      "placeholder": "https://www.youtube.com/watch?v=...",
+      "showIf": { "setting": "sourceType", "equals": "embed" }
+    },
     "displaySection": {
       "type": "section",
       "label": "Display Options"
@@ -60,7 +69,22 @@
         { "value": "fill", "label": "Stretch" },
         { "value": "none", "label": "Original Size" },
         { "value": "scale-down", "label": "Scale Down Only" }
-      ]
+      ],
+      "showIf": { "setting": "sourceType", "equals": "url" }
+    },
+    "objectFitFile": {
+      "type": "select",
+      "label": "Scaling Mode",
+      "description": "How the media should fit within the widget",
+      "default": "contain",
+      "options": [
+        { "value": "contain", "label": "Fit (show all)" },
+        { "value": "cover", "label": "Cover (fill area)" },
+        { "value": "fill", "label": "Stretch" },
+        { "value": "none", "label": "Original Size" },
+        { "value": "scale-down", "label": "Scale Down Only" }
+      ],
+      "showIf": { "setting": "sourceType", "equals": "file" }
     },
     "objectPosition": {
       "type": "select",
@@ -77,7 +101,8 @@
         { "value": "top right", "label": "Top Right" },
         { "value": "bottom left", "label": "Bottom Left" },
         { "value": "bottom right", "label": "Bottom Right" }
-      ]
+      ],
+      "showIf": { "setting": "sourceType", "equals": "url" }
     },
     "backgroundColor": {
       "type": "color",
@@ -119,17 +144,19 @@
     "showControls": {
       "type": "boolean",
       "label": "Show Controls",
-      "description": "Display video playback controls",
-      "default": false
+      "description": "Display video playback controls (direct videos only)",
+      "default": false,
+      "showIf": { "setting": "sourceType", "equals": "url" }
     },
     "playbackRate": {
       "type": "range",
       "label": "Playback Speed",
-      "description": "Video playback speed multiplier",
+      "description": "Video playback speed multiplier (direct videos only)",
       "min": 0.25,
       "max": 2,
       "step": 0.25,
-      "default": 1
+      "default": 1,
+      "showIf": { "setting": "sourceType", "equals": "url" }
     },
     "effectsSection": {
       "type": "section",
@@ -206,7 +233,8 @@
       "min": 0,
       "max": 60,
       "step": 1,
-      "default": 0
+      "default": 0,
+      "showIf": { "setting": "sourceType", "equals": "url" }
     }
   },
   "defaultLayout": {

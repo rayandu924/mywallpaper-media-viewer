@@ -56,6 +56,42 @@
       const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm4v', 'avi', 'mkv'];
       const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif', 'tiff'];
 
+      // Embed platforms configuration
+      const EMBED_PLATFORMS = {
+        youtube: {
+          patterns: [
+            /youtube\.com\/watch\?v=([^&]+)/,
+            /youtube\.com\/embed\/([^?]+)/,
+            /youtu\.be\/([^?]+)/,
+            /youtube\.com\/shorts\/([^?]+)/
+          ],
+          embedUrl: (id, opts) =>
+            `https://www.youtube-nocookie.com/embed/${id}?autoplay=${opts.autoplay ? 1 : 0}&mute=${opts.muted ? 1 : 0}&loop=${opts.loop ? 1 : 0}&rel=0&modestbranding=1`
+        },
+        vimeo: {
+          patterns: [/vimeo\.com\/(\d+)/],
+          embedUrl: (id, opts) =>
+            `https://player.vimeo.com/video/${id}?autoplay=${opts.autoplay ? 1 : 0}&muted=${opts.muted ? 1 : 0}&loop=${opts.loop ? 1 : 0}&background=1`
+        },
+        twitch: {
+          patterns: [
+            /twitch\.tv\/videos\/(\d+)/,
+            /twitch\.tv\/([^/?]+)$/
+          ],
+          embedUrl: (id, opts, isVideo) => {
+            const parent = location.hostname || 'localhost';
+            return isVideo
+              ? `https://player.twitch.tv/?video=${id}&parent=${parent}&autoplay=${opts.autoplay}`
+              : `https://player.twitch.tv/?channel=${id}&parent=${parent}&autoplay=${opts.autoplay}&muted=${opts.muted}`;
+          }
+        },
+        dailymotion: {
+          patterns: [/dailymotion\.com\/video\/([^_?]+)/],
+          embedUrl: (id, opts) =>
+            `https://www.dailymotion.com/embed/video/${id}?autoplay=${opts.autoplay ? 1 : 0}&mute=${opts.muted ? 1 : 0}`
+        }
+      };
+
       // ==========================================================================
       // UTILITY FUNCTIONS
       // ==========================================================================
@@ -121,6 +157,35 @@
         }
 
         return filters.length > 0 ? filters.join(' ') : 'none';
+      }
+
+      function parseEmbedUrl(url, settings) {
+        if (!url) return null;
+
+        const opts = {
+          autoplay: settings.autoplay ?? true,
+          muted: settings.muted ?? true,
+          loop: settings.loop ?? false
+        };
+
+        for (const [platform, config] of Object.entries(EMBED_PLATFORMS)) {
+          for (let i = 0; i < config.patterns.length; i++) {
+            const pattern = config.patterns[i];
+            const match = url.match(pattern);
+            if (match) {
+              const id = match[1];
+              // For Twitch, check if it's a video or channel
+              const isVideo = platform === 'twitch' && url.includes('/videos/');
+              return {
+                platform,
+                embedUrl: config.embedUrl(id, opts, isVideo),
+                videoId: id
+              };
+            }
+          }
+        }
+
+        return null; // Platform not recognized
       }
 
       function showLoading() {
@@ -221,6 +286,31 @@
         return video;
       }
 
+      function createEmbedElement(embedData, settings) {
+        const iframe = document.createElement('iframe');
+        iframe.className = 'media-element embed-frame';
+        iframe.src = embedData.embedUrl;
+        iframe.frameBorder = '0';
+        iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
+        iframe.allowFullscreen = true;
+        iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
+
+        iframe.onload = () => {
+          hideLoading();
+          hideFallback();
+          iframe.classList.remove('hidden');
+          api.renderComplete();
+          console.log(`[MediaViewer] ${embedData.platform} embed loaded`);
+        };
+
+        iframe.onerror = () => {
+          console.error(`[MediaViewer] Failed to load ${embedData.platform} embed`);
+          showFallback(`Failed to load ${embedData.platform} video`);
+        };
+
+        return iframe;
+      }
+
       // ==========================================================================
       // APPLY SETTINGS
       // ==========================================================================
@@ -265,22 +355,27 @@
 
       function getMediaSource(settings) {
         // Use sourceType to determine which field to use
-        if (settings.sourceType === 'file') {
-          return settings.mediaFile || null;
-        } else {
-          // Default to URL mode
-          return settings.mediaUrl || null;
+        switch (settings.sourceType) {
+          case 'file':
+            return { type: 'direct', url: settings.mediaFile || null };
+          case 'embed':
+            return { type: 'embed', url: settings.embedUrl || null };
+          case 'url':
+          default:
+            return { type: 'direct', url: settings.mediaUrl || null };
         }
       }
 
       function loadMedia(settings) {
-        const url = getMediaSource(settings);
+        const source = getMediaSource(settings);
 
-        if (!url) {
-          const message = settings.sourceType === 'file'
-            ? 'No file uploaded'
-            : 'No URL configured';
-          showFallback(message);
+        if (!source.url) {
+          const messages = {
+            'file': 'No file uploaded',
+            'embed': 'No video URL provided',
+            'url': 'No URL configured'
+          };
+          showFallback(messages[settings.sourceType] || 'No URL configured');
           return;
         }
 
@@ -296,20 +391,36 @@
           currentMediaEl = null;
         }
 
-        const mediaType = getMediaType(url);
-        console.log('[MediaViewer] Loading media:', url, 'type:', mediaType);
+        // Handle embed sources (YouTube, Vimeo, Twitch, Dailymotion)
+        if (source.type === 'embed') {
+          const embedData = parseEmbedUrl(source.url, settings);
+          if (!embedData) {
+            showFallback('Unsupported video platform. Try YouTube, Vimeo, Twitch, or Dailymotion.');
+            return;
+          }
+          console.log('[MediaViewer] Loading embed:', embedData.platform, embedData.videoId);
+          currentMediaEl = createEmbedElement(embedData, settings);
+          applyStyles(currentMediaEl, settings);
+          applyContainerStyles(settings);
+          mediaWrapper.appendChild(currentMediaEl);
+          return;
+        }
+
+        // Handle direct media (images, videos)
+        const mediaType = getMediaType(source.url);
+        console.log('[MediaViewer] Loading media:', source.url, 'type:', mediaType);
 
         if (mediaType === 'video') {
-          currentMediaEl = createVideoElement(url, settings);
+          currentMediaEl = createVideoElement(source.url, settings);
         } else if (mediaType === 'image') {
-          currentMediaEl = createImageElement(url, settings);
+          currentMediaEl = createImageElement(source.url, settings);
         } else if (mediaType === 'unknown') {
           // Try as image first, then video
-          currentMediaEl = createImageElement(url, settings);
+          currentMediaEl = createImageElement(source.url, settings);
           currentMediaEl.onerror = () => {
             console.log('[MediaViewer] Image failed, trying as video');
             currentMediaEl.remove();
-            currentMediaEl = createVideoElement(url, settings);
+            currentMediaEl = createVideoElement(source.url, settings);
             applyStyles(currentMediaEl, settings);
             mediaWrapper.appendChild(currentMediaEl);
           };
@@ -345,9 +456,10 @@
       api.onSettingsChange((settings, changedKeys) => {
         console.log('[MediaViewer] Settings changed:', changedKeys);
 
-        // Check if media source changed (URL, file, or source type selector)
+        // Check if media source changed (URL, file, embed URL, or source type selector)
         const mediaChanged = changedKeys.includes('mediaUrl') ||
                             changedKeys.includes('mediaFile') ||
+                            changedKeys.includes('embedUrl') ||
                             changedKeys.includes('sourceType');
 
         if (mediaChanged) {
