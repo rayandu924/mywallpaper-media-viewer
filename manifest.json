@@ -1,6 +1,7 @@
 {
   "name": "Media Viewer",
   "version": "1.0.0",
+  "sdkVersion": "2.3.0",
   "description": "Universal media display widget supporting images, videos, GIFs, and more. Perfect for displaying your favorite visuals on your desktop.",
   "author": "MyWallpaper Community",
   "categories": ["media", "utilities", "display"],
