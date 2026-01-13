@@ -263,11 +263,24 @@
       // MEDIA LOADING
       // ==========================================================================
 
+      function getMediaSource(settings) {
+        // Use sourceType to determine which field to use
+        if (settings.sourceType === 'file') {
+          return settings.mediaFile || null;
+        } else {
+          // Default to URL mode
+          return settings.mediaUrl || null;
+        }
+      }
+
       function loadMedia(settings) {
-        const url = settings.mediaFile || settings.mediaUrl;
+        const url = getMediaSource(settings);
 
         if (!url) {
-          showFallback('No media source configured');
+          const message = settings.sourceType === 'file'
+            ? 'No file uploaded'
+            : 'No URL configured';
+          showFallback(message);
           return;
         }
 
@@ -332,9 +345,10 @@
       api.onSettingsChange((settings, changedKeys) => {
         console.log('[MediaViewer] Settings changed:', changedKeys);
 
-        // Check if media source changed
+        // Check if media source changed (URL, file, or source type selector)
         const mediaChanged = changedKeys.includes('mediaUrl') ||
-                            changedKeys.includes('mediaFile');
+                            changedKeys.includes('mediaFile') ||
+                            changedKeys.includes('sourceType');
 
         if (mediaChanged) {
           loadMedia(settings);

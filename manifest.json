@@ -1,6 +1,6 @@
 {
   "name": "Media Viewer",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "sdkVersion": "2.3.0",
   "description": "Universal media display widget supporting images, videos, GIFs, and more. Perfect for displaying your favorite visuals on your desktop.",
   "author": "MyWallpaper Community",
@@ -21,17 +21,29 @@
       "type": "section",
       "label": "Media Source"
     },
+    "sourceType": {
+      "type": "select",
+      "label": "Source Type",
+      "description": "Choose how to provide the media",
+      "default": "url",
+      "options": [
+        { "value": "url", "label": "URL (Web Link)" },
+        { "value": "file", "label": "Upload File" }
+      ]
+    },
     "mediaUrl": {
       "type": "string",
       "label": "Media URL",
       "description": "URL to image, video, or GIF. Supports: jpg, png, gif, webp, mp4, webm, ogg, svg",
       "default": "",
-      "placeholder": "https://example.com/media.mp4"
+      "placeholder": "https://example.com/media.mp4",
+      "showIf": { "setting": "sourceType", "equals": "url" }
     },
     "mediaFile": {
       "type": "image",
-      "label": "Or Upload Media",
-      "description": "Upload a local image or video file"
+      "label": "Upload Media",
+      "description": "Upload a local image or video file",
+      "showIf": { "setting": "sourceType", "equals": "file" }
     },
     "displaySection": {
       "type": "section",
@@ -71,7 +83,7 @@
       "type": "color",
       "label": "Background Color",
       "description": "Color shown behind the media or as fallback",
-      "default": "transparent"
+      "default": "#00000000"
     },
     "borderRadius": {
       "type": "range",
