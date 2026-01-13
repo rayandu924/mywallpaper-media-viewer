@@ -1,0 +1,205 @@
+{
+  "name": "Media Viewer",
+  "version": "1.0.0",
+  "description": "Universal media display widget supporting images, videos, GIFs, and more. Perfect for displaying your favorite visuals on your desktop.",
+  "author": "MyWallpaper Community",
+  "categories": ["media", "utilities", "display"],
+  "icon": "icon.svg",
+  "capabilities": {
+    "hotReload": true,
+    "systemEvents": ["viewport:resize", "theme:change", "visibility:change"]
+  },
+  "permissions": {
+    "storage": { "quota": 256 },
+    "network": {
+      "domains": ["*"]
+    }
+  },
+  "settings": {
+    "mediaSection": {
+      "type": "section",
+      "label": "Media Source"
+    },
+    "mediaUrl": {
+      "type": "string",
+      "label": "Media URL",
+      "description": "URL to image, video, or GIF. Supports: jpg, png, gif, webp, mp4, webm, ogg, svg",
+      "default": "",
+      "placeholder": "https://example.com/media.mp4"
+    },
+    "mediaFile": {
+      "type": "image",
+      "label": "Or Upload Media",
+      "description": "Upload a local image or video file"
+    },
+    "displaySection": {
+      "type": "section",
+      "label": "Display Options"
+    },
+    "objectFit": {
+      "type": "select",
+      "label": "Scaling Mode",
+      "description": "How the media should fit within the widget",
+      "default": "contain",
+      "options": [
+        { "value": "contain", "label": "Fit (show all)" },
+        { "value": "cover", "label": "Cover (fill area)" },
+        { "value": "fill", "label": "Stretch" },
+        { "value": "none", "label": "Original Size" },
+        { "value": "scale-down", "label": "Scale Down Only" }
+      ]
+    },
+    "objectPosition": {
+      "type": "select",
+      "label": "Position",
+      "description": "Alignment when media doesn't fill the widget",
+      "default": "center",
+      "options": [
+        { "value": "center", "label": "Center" },
+        { "value": "top", "label": "Top" },
+        { "value": "bottom", "label": "Bottom" },
+        { "value": "left", "label": "Left" },
+        { "value": "right", "label": "Right" },
+        { "value": "top left", "label": "Top Left" },
+        { "value": "top right", "label": "Top Right" },
+        { "value": "bottom left", "label": "Bottom Left" },
+        { "value": "bottom right", "label": "Bottom Right" }
+      ]
+    },
+    "backgroundColor": {
+      "type": "color",
+      "label": "Background Color",
+      "description": "Color shown behind the media or as fallback",
+      "default": "transparent"
+    },
+    "borderRadius": {
+      "type": "range",
+      "label": "Corner Radius",
+      "description": "Rounded corners (in pixels)",
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "default": 0
+    },
+    "videoSection": {
+      "type": "section",
+      "label": "Video Options"
+    },
+    "autoplay": {
+      "type": "boolean",
+      "label": "Autoplay",
+      "description": "Start video playback automatically",
+      "default": true
+    },
+    "loop": {
+      "type": "boolean",
+      "label": "Loop",
+      "description": "Repeat video when it ends",
+      "default": true
+    },
+    "muted": {
+      "type": "boolean",
+      "label": "Muted",
+      "description": "Play video without sound (required for autoplay)",
+      "default": true
+    },
+    "showControls": {
+      "type": "boolean",
+      "label": "Show Controls",
+      "description": "Display video playback controls",
+      "default": false
+    },
+    "playbackRate": {
+      "type": "range",
+      "label": "Playback Speed",
+      "description": "Video playback speed multiplier",
+      "min": 0.25,
+      "max": 2,
+      "step": 0.25,
+      "default": 1
+    },
+    "effectsSection": {
+      "type": "section",
+      "label": "Visual Effects"
+    },
+    "opacity": {
+      "type": "range",
+      "label": "Opacity",
+      "description": "Media transparency (0-100%)",
+      "min": 0,
+      "max": 100,
+      "step": 1,
+      "default": 100
+    },
+    "blur": {
+      "type": "range",
+      "label": "Blur",
+      "description": "Gaussian blur effect (in pixels)",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 0
+    },
+    "brightness": {
+      "type": "range",
+      "label": "Brightness",
+      "description": "Brightness adjustment (100% = normal)",
+      "min": 0,
+      "max": 200,
+      "step": 5,
+      "default": 100
+    },
+    "contrast": {
+      "type": "range",
+      "label": "Contrast",
+      "description": "Contrast adjustment (100% = normal)",
+      "min": 0,
+      "max": 200,
+      "step": 5,
+      "default": 100
+    },
+    "saturate": {
+      "type": "range",
+      "label": "Saturation",
+      "description": "Color saturation (100% = normal, 0% = grayscale)",
+      "min": 0,
+      "max": 200,
+      "step": 5,
+      "default": 100
+    },
+    "hueRotate": {
+      "type": "range",
+      "label": "Hue Rotate",
+      "description": "Shift all colors around the color wheel (in degrees)",
+      "min": 0,
+      "max": 360,
+      "step": 15,
+      "default": 0
+    },
+    "advancedSection": {
+      "type": "section",
+      "label": "Advanced"
+    },
+    "fallbackText": {
+      "type": "string",
+      "label": "Fallback Text",
+      "description": "Text shown when media fails to load",
+      "default": "Media unavailable"
+    },
+    "refreshInterval": {
+      "type": "range",
+      "label": "Auto-Refresh (minutes)",
+      "description": "Reload media periodically (0 = disabled). Useful for webcams or updating images.",
+      "min": 0,
+      "max": 60,
+      "step": 1,
+      "default": 0
+    }
+  },
+  "defaultLayout": {
+    "xPercent": 50,
+    "yPercent": 50,
+    "widthPercent": 40,
+    "heightPercent": 50
+  }
+}
