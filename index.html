@@ -357,14 +357,10 @@
         // Use sourceType to determine which field to use
         switch (settings.sourceType) {
           case 'file':
-            return { type: 'direct', url: settings.mediaFile || null };
-          case 'fileVideo':
-            return { type: 'direct', url: settings.mediaVideo || null };
-          case 'embed':
-            return { type: 'embed', url: settings.embedUrl || null };
+            return { type: 'file', url: settings.mediaFile || null };
           case 'url':
           default:
-            return { type: 'direct', url: settings.mediaUrl || null };
+            return { type: 'url', url: settings.mediaUrl || null };
         }
       }
 
@@ -373,9 +369,7 @@
 
         if (!source.url) {
           const messages = {
-            'file': 'No image uploaded',
-            'fileVideo': 'No video uploaded',
-            'embed': 'No video URL provided',
+            'file': 'No file uploaded',
             'url': 'No URL configured'
           };
           showFallback(messages[settings.sourceType] || 'No URL configured');
@@ -394,24 +388,22 @@
           currentMediaEl = null;
         }
 
-        // Handle embed sources (YouTube, Vimeo, Twitch, Dailymotion)
-        if (source.type === 'embed') {
+        // For URL sources, try to detect embed platforms first
+        if (source.type === 'url') {
           const embedData = parseEmbedUrl(source.url, settings);
-          if (!embedData) {
-            showFallback('Unsupported video platform. Try YouTube, Vimeo, Twitch, or Dailymotion.');
+          if (embedData) {
+            console.log('[MediaViewer] Loading embed:', embedData.platform, embedData.videoId);
+            currentMediaEl = createEmbedElement(embedData, settings);
+            applyStyles(currentMediaEl, settings);
+            applyContainerStyles(settings);
+            mediaWrapper.appendChild(currentMediaEl);
             return;
           }
-          console.log('[MediaViewer] Loading embed:', embedData.platform, embedData.videoId);
-          currentMediaEl = createEmbedElement(embedData, settings);
-          applyStyles(currentMediaEl, settings);
-          applyContainerStyles(settings);
-          mediaWrapper.appendChild(currentMediaEl);
-          return;
         }
 
-        // Handle direct media (images, videos)
+        // Handle direct media (images, videos, uploaded files)
         const mediaType = getMediaType(source.url);
-        console.log('[MediaViewer] Loading media:', source.url, 'type:', mediaType);
+        console.log('[MediaViewer] Loading media:', source.url.substring(0, 50) + '...', 'type:', mediaType);
 
         if (mediaType === 'video') {
           currentMediaEl = createVideoElement(source.url, settings);
@@ -459,11 +451,9 @@
       api.onSettingsChange((settings, changedKeys) => {
         console.log('[MediaViewer] Settings changed:', changedKeys);
 
-        // Check if media source changed (URL, file, video file, embed URL, or source type selector)
+        // Check if media source changed
         const mediaChanged = changedKeys.includes('mediaUrl') ||
                             changedKeys.includes('mediaFile') ||
-                            changedKeys.includes('mediaVideo') ||
-                            changedKeys.includes('embedUrl') ||
                             changedKeys.includes('sourceType');
 
         if (mediaChanged) {
