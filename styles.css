@@ -43,6 +43,8 @@ html, body {
   align-items: center;
   justify-content: center;
   overflow: hidden;
+  position: relative;
+  z-index: 1;
 }
 
 .media-element {
@@ -59,6 +61,34 @@ video::-webkit-media-controls {
 
 video::-webkit-media-controls-panel {
   background: transparent;
+}
+
+/* ==========================================================================
+   Audio Elements
+   ========================================================================== */
+
+.audio-element {
+  max-width: 90%;
+  max-height: 60px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(20, 20, 30, 0.95) 100%);
+}
+
+/* Audio element with visible controls */
+audio::-webkit-media-controls-panel {
+  background: linear-gradient(to right, rgba(60, 60, 80, 0.95), rgba(40, 40, 60, 0.95));
+}
+
+audio::-webkit-media-controls-current-time-display,
+audio::-webkit-media-controls-time-remaining-display {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+/* Audio track (hidden, synced with video) */
+.audio-track-element {
+  display: none !important;
+  position: absolute;
+  pointer-events: none;
 }
 
 /* ==========================================================================

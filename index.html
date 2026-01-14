@@ -32,7 +32,9 @@
     // ==========================================================================
     // Supports: Images (jpg, png, gif, webp, svg, ico, bmp, avif)
     //           Videos (mp4, webm, ogg, mov)
+    //           Audio  (mp3, wav, ogg, flac, aac, m4a, opus, weba)
     //           External URLs and uploaded files
+    //           Separate audio track overlay for silent videos
     // ==========================================================================
 
     (function() {
@@ -49,12 +51,148 @@
 
       // State
       let currentMediaEl = null;
+      let audioTrackEl = null;  // Separate audio track element
       let refreshTimer = null;
       let isPaused = false;
+
+      // ==========================================================================
+      // BLOB TRANSFER SUPPORT
+      // ==========================================================================
+      // The host sends FILE_BLOB messages containing actual Blob objects.
+      // We create blob URLs from these Blobs in our own context (even null-origin)
+      // and use them instead of the placeholder IDs in settings.
+
+      const receivedBlobs = new Map();  // Map<placeholderId, blobUrl>
+
+      // Listen for FILE_BLOB messages from host
+      window.addEventListener('message', (event) => {
+        if (event.data?.type === 'FILE_BLOB' && event.data?.source === 'MyWallpaperHost') {
+          const { settingKey, placeholderId, blob, mimeType } = event.data;
+
+          if (blob && blob instanceof Blob) {
+            // Create our own blob URL from the received Blob
+            const blobUrl = URL.createObjectURL(blob);
+            receivedBlobs.set(placeholderId, blobUrl);
+            console.log(`[MediaViewer] Received blob for ${settingKey}: ${blobUrl.substring(0, 50)}... (${blob.size} bytes, ${mimeType})`);
+
+            // If we're already loaded and waiting for this blob, trigger a reload
+            // Check if the current mediaFile/audioTrackFile matches this placeholder
+            if (api.config) {
+              const needsReload =
+                api.config.mediaFile === placeholderId ||
+                api.config.audioTrackFile === placeholderId;
+
+              if (needsReload) {
+                console.log('[MediaViewer] Blob received for pending media, reloading...');
+                loadMedia(api.config);
+              }
+            }
+          } else {
+            console.warn('[MediaViewer] Received invalid blob for', settingKey);
+          }
+        }
+      });
+
+      /**
+       * Resolve a setting value - if it's a blob placeholder, return the actual blob URL
+       */
+      function resolveSettingValue(value) {
+        if (typeof value === 'string' && value.startsWith('__blob_')) {
+          const blobUrl = receivedBlobs.get(value);
+          if (blobUrl) {
+            console.log('[MediaViewer] Resolved placeholder to blob URL:', blobUrl.substring(0, 50));
+            return blobUrl;
+          } else {
+            console.log('[MediaViewer] Waiting for blob:', value);
+            return null;  // Blob not yet received
+          }
+        }
+        return value;
+      }
 
       // Media type detection
       const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm4v', 'avi', 'mkv'];
       const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif', 'tiff'];
+      const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'opus', 'weba', 'wma'];
+
+      // Cache for converted blob URLs to avoid memory leaks
+      const blobUrlCache = new Map();
+
+      /**
+       * Check if we're in a sandboxed context where blob URLs won't work
+       * In srcdoc iframes WITHOUT allow-same-origin, the origin is "null" and blob:null/... URLs fail
+       */
+      function isNullOrigin() {
+        try {
+          // If we can access window.origin and it's not 'null', we have same-origin
+          return window.origin === 'null' || window.location.origin === 'null';
+        } catch (e) {
+          // If we can't access, assume null origin
+          return true;
+        }
+      }
+
+      /**
+       * Convert data URL to Blob URL to bypass CSP restrictions
+       * CSP often allows blob: but blocks data: for media-src
+       * With allow-same-origin, blob URLs work properly
+       */
+      function dataUrlToBlobUrl(dataUrl) {
+        // Check if we're in null-origin context
+        const nullOrigin = isNullOrigin();
+        console.log('[MediaViewer] Origin check - isNullOrigin:', nullOrigin, 'window.origin:', window.origin);
+
+        // In null-origin contexts, blob URLs don't work - use data URL directly
+        // But this may fail for large videos!
+        if (nullOrigin) {
+          console.log('[MediaViewer] Null origin detected, using data URL directly (may fail for large files)');
+          return dataUrl;
+        }
+
+        // Check cache first
+        if (blobUrlCache.has(dataUrl)) {
+          return blobUrlCache.get(dataUrl);
+        }
+
+        try {
+          // Parse data URL
+          const [header, base64Data] = dataUrl.split(',');
+          const mimeMatch = header.match(/data:([^;]+)/);
+          if (!mimeMatch) return dataUrl;
+
+          const mimeType = mimeMatch[1];
+          const byteCharacters = atob(base64Data);
+          const byteNumbers = new Array(byteCharacters.length);
+
+          for (let i = 0; i < byteCharacters.length; i++) {
+            byteNumbers[i] = byteCharacters.charCodeAt(i);
+          }
+
+          const byteArray = new Uint8Array(byteNumbers);
+          const blob = new Blob([byteArray], { type: mimeType });
+          const blobUrl = URL.createObjectURL(blob);
+
+          // Cache it
+          blobUrlCache.set(dataUrl, blobUrl);
+          console.log('[MediaViewer] Converted data URL to blob URL:', blobUrl.substring(0, 50));
+
+          return blobUrl;
+        } catch (e) {
+          console.error('[MediaViewer] Failed to convert data URL to blob:', e);
+          return dataUrl;
+        }
+      }
+
+      /**
+       * Prepare URL for use - converts data URLs to blob URLs if needed
+       */
+      function prepareMediaUrl(url) {
+        if (!url) return null;
+        if (url.startsWith('data:')) {
+          return dataUrlToBlobUrl(url);
+        }
+        return url;
+      }
 
       // Embed platforms configuration
       const EMBED_PLATFORMS = {
@@ -65,8 +203,22 @@
             /youtu\.be\/([^?]+)/,
             /youtube\.com\/shorts\/([^?]+)/
           ],
-          embedUrl: (id, opts) =>
-            `https://www.youtube-nocookie.com/embed/${id}?autoplay=${opts.autoplay ? 1 : 0}&mute=${opts.muted ? 1 : 0}&loop=${opts.loop ? 1 : 0}&rel=0&modestbranding=1`
+          // Use youtube.com directly (not nocookie) with minimal parameters
+          // Adding origin parameter helps with postMessage communication
+          embedUrl: (id, opts) => {
+            const params = new URLSearchParams({
+              autoplay: opts.autoplay ? '1' : '0',
+              mute: opts.muted ? '1' : '0',
+              loop: opts.loop ? '1' : '0',
+              rel: '0',
+              modestbranding: '1',
+              playsinline: '1',
+              // These parameters help with sandboxed contexts
+              enablejsapi: '0',  // Disable JS API to avoid errors
+              origin: window.location.origin
+            });
+            return `https://www.youtube.com/embed/${id}?${params.toString()}`;
+          }
         },
         vimeo: {
           patterns: [/vimeo\.com\/(\d+)/],
@@ -103,6 +255,7 @@
         if (url.startsWith('data:')) {
           if (url.startsWith('data:video/')) return 'video';
           if (url.startsWith('data:image/')) return 'image';
+          if (url.startsWith('data:audio/')) return 'audio';
           return null;
         }
 
@@ -120,11 +273,13 @@
 
           if (VIDEO_EXTENSIONS.includes(extension)) return 'video';
           if (IMAGE_EXTENSIONS.includes(extension)) return 'image';
+          if (AUDIO_EXTENSIONS.includes(extension)) return 'audio';
         } catch (e) {
           // Invalid URL, try extension from string
           const extension = url.split('.').pop()?.toLowerCase().split('?')[0];
           if (VIDEO_EXTENSIONS.includes(extension)) return 'video';
           if (IMAGE_EXTENSIONS.includes(extension)) return 'image';
+          if (AUDIO_EXTENSIONS.includes(extension)) return 'audio';
         }
 
         // Check common video hosting patterns
@@ -244,6 +399,7 @@
         video.autoplay = settings.autoplay && !isPaused;
         video.loop = settings.loop;
         video.muted = settings.muted;
+        video.volume = (settings.volume ?? 80) / 100;  // Convert 0-100 to 0-1
         video.controls = settings.showControls;
         video.playbackRate = settings.playbackRate;
         video.playsInline = true;
@@ -257,7 +413,8 @@
         };
 
         video.onerror = (e) => {
-          console.error('[MediaViewer] Failed to load video:', url, e);
+          console.error('[MediaViewer] Failed to load video:', url.substring(0, 100) + '...', e);
+          console.error('[MediaViewer] Video error code:', video.error?.code, 'message:', video.error?.message);
           showFallback(settings.fallbackText);
         };
 
@@ -266,39 +423,103 @@
           console.log('[MediaViewer] Video playing');
         };
 
+        // For data URLs, set src directly instead of using source element
+        // Some browsers handle data URLs better this way
+        if (url.startsWith('data:')) {
+          console.log('[MediaViewer] Setting video.src with data URL, length:', url.length);
+          video.src = url;
+          console.log('[MediaViewer] After assignment, video.src length:', video.src.length);
+          console.log('[MediaViewer] Video readyState:', video.readyState);
+          console.log('[MediaViewer] Video networkState:', video.networkState);
+        } else {
+          const source = document.createElement('source');
+          source.src = url;
+
+          // Try to determine MIME type
+          const ext = url.split('.').pop()?.toLowerCase().split('?')[0];
+          const mimeTypes = {
+            mp4: 'video/mp4',
+            webm: 'video/webm',
+            ogg: 'video/ogg',
+            mov: 'video/quicktime',
+            m4v: 'video/mp4'
+          };
+          if (mimeTypes[ext]) {
+            source.type = mimeTypes[ext];
+          }
+
+          video.appendChild(source);
+        }
+
+        return video;
+      }
+
+      function createAudioElement(url, settings) {
+        const audio = document.createElement('audio');
+        audio.className = 'media-element audio-element';
+
+        // Audio attributes
+        audio.autoplay = settings.autoplay && !isPaused;
+        audio.loop = settings.loop;
+        audio.muted = settings.muted;
+        audio.volume = (settings.volume ?? 80) / 100;
+        audio.controls = settings.showControls ?? true;  // Show controls by default for audio
+        audio.playbackRate = settings.playbackRate ?? 1;
+        audio.preload = 'auto';
+
+        audio.onloadeddata = () => {
+          hideLoading();
+          hideFallback();
+          audio.classList.remove('hidden');
+          api.renderComplete();
+        };
+
+        audio.onerror = (e) => {
+          console.error('[MediaViewer] Failed to load audio:', url, e);
+          showFallback(settings.fallbackText);
+        };
+
+        audio.onplay = () => {
+          console.log('[MediaViewer] Audio playing');
+        };
+
         const source = document.createElement('source');
         source.src = url;
 
         // Try to determine MIME type
         const ext = url.split('.').pop()?.toLowerCase().split('?')[0];
         const mimeTypes = {
-          mp4: 'video/mp4',
-          webm: 'video/webm',
-          ogg: 'video/ogg',
-          mov: 'video/quicktime',
-          m4v: 'video/mp4'
+          mp3: 'audio/mpeg',
+          wav: 'audio/wav',
+          ogg: 'audio/ogg',
+          flac: 'audio/flac',
+          aac: 'audio/aac',
+          m4a: 'audio/mp4',
+          opus: 'audio/opus',
+          weba: 'audio/webm',
+          wma: 'audio/x-ms-wma'
         };
         if (mimeTypes[ext]) {
           source.type = mimeTypes[ext];
         }
 
-        video.appendChild(source);
-        return video;
+        audio.appendChild(source);
+        return audio;
       }
 
       function createEmbedElement(embedData, settings) {
         const iframe = document.createElement('iframe');
         iframe.className = 'media-element embed-frame';
-        iframe.src = embedData.embedUrl;
         iframe.frameBorder = '0';
         iframe.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share';
         iframe.allowFullscreen = true;
         iframe.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
 
+        // For cross-origin iframes, onload may not fire reliably
+        // Show iframe immediately and hide loading after a short delay
         iframe.onload = () => {
           hideLoading();
           hideFallback();
-          iframe.classList.remove('hidden');
           api.renderComplete();
           console.log(`[MediaViewer] ${embedData.platform} embed loaded`);
         };
@@ -307,6 +528,15 @@
           console.error(`[MediaViewer] Failed to load ${embedData.platform} embed`);
           showFallback(`Failed to load ${embedData.platform} video`);
         };
+
+        // Set src after setting up handlers
+        iframe.src = embedData.embedUrl;
+
+        // Fallback: if onload doesn't fire within 3s, show anyway
+        setTimeout(() => {
+          hideLoading();
+          hideFallback();
+        }, 3000);
 
         return iframe;
       }
@@ -331,10 +561,11 @@
       }
 
       function applyVideoSettings(video, settings) {
-        if (!video || video.tagName !== 'VIDEO') return;
+        if (!video || (video.tagName !== 'VIDEO' && video.tagName !== 'AUDIO')) return;
 
         video.loop = settings.loop;
         video.muted = settings.muted;
+        video.volume = (settings.volume ?? 80) / 100;
         video.controls = settings.showControls;
 
         if (video.playbackRate !== settings.playbackRate) {
@@ -349,6 +580,15 @@
         }
       }
 
+      function applyAudioTrackSettings(audioTrack, settings) {
+        if (!audioTrack) return;
+
+        audioTrack.loop = settings.loop;
+        audioTrack.muted = settings.muted;
+        audioTrack.volume = (settings.volume ?? 80) / 100;
+        audioTrack.playbackRate = settings.playbackRate ?? 1;
+      }
+
       // ==========================================================================
       // MEDIA LOADING
       // ==========================================================================
@@ -357,15 +597,120 @@
         // Use sourceType to determine which field to use
         switch (settings.sourceType) {
           case 'file':
-            return { type: 'file', url: settings.mediaFile || null };
+            // Resolve placeholder to actual blob URL if available
+            const fileUrl = resolveSettingValue(settings.mediaFile);
+            return { type: 'file', url: fileUrl || null };
           case 'url':
           default:
             return { type: 'url', url: settings.mediaUrl || null };
         }
       }
 
+      function getAudioTrackSource(settings) {
+        if (!settings.audioTrackEnabled) return null;
+
+        switch (settings.audioTrackSourceType) {
+          case 'file':
+            // Resolve placeholder to actual blob URL if available
+            return resolveSettingValue(settings.audioTrackFile) || null;
+          case 'url':
+          default:
+            return settings.audioTrackUrl || null;
+        }
+      }
+
+      function loadAudioTrack(settings) {
+        // Clean up existing audio track
+        if (audioTrackEl) {
+          audioTrackEl.pause();
+          audioTrackEl.src = '';
+          audioTrackEl.remove();
+          audioTrackEl = null;
+        }
+
+        const audioUrl = getAudioTrackSource(settings);
+        if (!audioUrl) return;
+
+        const preparedUrl = prepareMediaUrl(audioUrl);
+        console.log('[MediaViewer] Loading audio track:', preparedUrl.substring(0, 50) + '...');
+
+        audioTrackEl = document.createElement('audio');
+        audioTrackEl.className = 'audio-track-element';
+        audioTrackEl.autoplay = settings.autoplay && !isPaused;
+        audioTrackEl.loop = settings.loop;
+        audioTrackEl.muted = settings.muted;
+        audioTrackEl.volume = (settings.volume ?? 80) / 100;
+        audioTrackEl.playbackRate = settings.playbackRate ?? 1;
+        audioTrackEl.preload = 'auto';
+        audioTrackEl.style.display = 'none';  // Hidden audio element
+
+        audioTrackEl.onloadeddata = () => {
+          console.log('[MediaViewer] Audio track loaded');
+          // Sync with video if it exists
+          if (currentMediaEl?.tagName === 'VIDEO' && !currentMediaEl.paused) {
+            audioTrackEl.currentTime = currentMediaEl.currentTime;
+            audioTrackEl.play().catch(() => {});
+          }
+        };
+
+        audioTrackEl.onerror = (e) => {
+          console.error('[MediaViewer] Failed to load audio track:', e);
+        };
+
+        const source = document.createElement('source');
+        source.src = preparedUrl;
+        audioTrackEl.appendChild(source);
+        mediaWrapper.appendChild(audioTrackEl);
+
+        // Sync playback with main video
+        if (currentMediaEl?.tagName === 'VIDEO') {
+          syncAudioWithVideo();
+        }
+      }
+
+      function syncAudioWithVideo() {
+        if (!audioTrackEl || !currentMediaEl || currentMediaEl.tagName !== 'VIDEO') return;
+
+        const video = currentMediaEl;
+
+        video.addEventListener('play', () => {
+          if (audioTrackEl) {
+            audioTrackEl.currentTime = video.currentTime;
+            audioTrackEl.play().catch(() => {});
+          }
+        });
+
+        video.addEventListener('pause', () => {
+          if (audioTrackEl) audioTrackEl.pause();
+        });
+
+        video.addEventListener('seeked', () => {
+          if (audioTrackEl) audioTrackEl.currentTime = video.currentTime;
+        });
+
+        video.addEventListener('ratechange', () => {
+          if (audioTrackEl) audioTrackEl.playbackRate = video.playbackRate;
+        });
+      }
+
       function loadMedia(settings) {
         const source = getMediaSource(settings);
+
+        console.log('[MediaViewer] loadMedia called, source:', {
+          type: source.type,
+          urlLength: source.url?.length || 0,
+          urlStart: source.url?.substring(0, 100) || 'null'
+        });
+
+        // If we're waiting for a blob, show loading and wait
+        if (!source.url && source.type === 'file') {
+          const rawValue = settings.mediaFile;
+          if (rawValue && typeof rawValue === 'string' && rawValue.startsWith('__blob_')) {
+            console.log('[MediaViewer] Waiting for blob to arrive:', rawValue);
+            showLoading();
+            return;  // Will be called again when blob arrives
+          }
+        }
 
         if (!source.url) {
           const messages = {
@@ -376,17 +721,35 @@
           return;
         }
 
+        // Check if URL is truncated or empty
+        if (source.url.length < 50 && source.url.startsWith('data:')) {
+          console.error('[MediaViewer] Data URL appears truncated! Length:', source.url.length);
+          showFallback('File data is corrupted or too large');
+          return;
+        }
+
         showLoading();
 
         // Clear previous media
         if (currentMediaEl) {
-          if (currentMediaEl.tagName === 'VIDEO') {
+          if (currentMediaEl.tagName === 'VIDEO' || currentMediaEl.tagName === 'AUDIO') {
             currentMediaEl.pause();
             currentMediaEl.src = '';
           }
           currentMediaEl.remove();
           currentMediaEl = null;
         }
+
+        // Clear audio track
+        if (audioTrackEl) {
+          audioTrackEl.pause();
+          audioTrackEl.src = '';
+          audioTrackEl.remove();
+          audioTrackEl = null;
+        }
+
+        // Prepare URL (convert data: to blob: for CSP compatibility)
+        const mediaUrl = prepareMediaUrl(source.url);
 
         // For URL sources, try to detect embed platforms first
         if (source.type === 'url') {
@@ -401,21 +764,34 @@
           }
         }
 
-        // Handle direct media (images, videos, uploaded files)
+        // Handle direct media (images, videos, audio, uploaded files)
         const mediaType = getMediaType(source.url);
-        console.log('[MediaViewer] Loading media:', source.url.substring(0, 50) + '...', 'type:', mediaType);
+        console.log('[MediaViewer] Loading media:', mediaUrl.substring(0, 50) + '...', 'type:', mediaType);
 
         if (mediaType === 'video') {
-          currentMediaEl = createVideoElement(source.url, settings);
+          currentMediaEl = createVideoElement(mediaUrl, settings);
+          // Load audio track after video if enabled
+          setTimeout(() => loadAudioTrack(settings), 100);
+        } else if (mediaType === 'audio') {
+          currentMediaEl = createAudioElement(mediaUrl, settings);
         } else if (mediaType === 'image') {
-          currentMediaEl = createImageElement(source.url, settings);
+          currentMediaEl = createImageElement(mediaUrl, settings);
+          // Load audio track for images too (background music)
+          setTimeout(() => loadAudioTrack(settings), 100);
         } else if (mediaType === 'unknown') {
-          // Try as image first, then video
-          currentMediaEl = createImageElement(source.url, settings);
+          // Try as image first, then video, then audio
+          currentMediaEl = createImageElement(mediaUrl, settings);
           currentMediaEl.onerror = () => {
             console.log('[MediaViewer] Image failed, trying as video');
             currentMediaEl.remove();
-            currentMediaEl = createVideoElement(source.url, settings);
+            currentMediaEl = createVideoElement(mediaUrl, settings);
+            currentMediaEl.onerror = () => {
+              console.log('[MediaViewer] Video failed, trying as audio');
+              currentMediaEl.remove();
+              currentMediaEl = createAudioElement(mediaUrl, settings);
+              applyStyles(currentMediaEl, settings);
+              mediaWrapper.appendChild(currentMediaEl);
+            };
             applyStyles(currentMediaEl, settings);
             mediaWrapper.appendChild(currentMediaEl);
           };
@@ -456,6 +832,12 @@
                             changedKeys.includes('mediaFile') ||
                             changedKeys.includes('sourceType');
 
+        // Check if audio track settings changed
+        const audioTrackChanged = changedKeys.includes('audioTrackEnabled') ||
+                                  changedKeys.includes('audioTrackSourceType') ||
+                                  changedKeys.includes('audioTrackUrl') ||
+                                  changedKeys.includes('audioTrackFile');
+
         if (mediaChanged) {
           loadMedia(settings);
         } else {
@@ -463,10 +845,20 @@
           applyStyles(currentMediaEl, settings);
           applyContainerStyles(settings);
 
-          // Video-specific settings
-          if (currentMediaEl?.tagName === 'VIDEO') {
+          // Video/Audio-specific settings
+          if (currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO') {
             applyVideoSettings(currentMediaEl, settings);
           }
+
+          // Update audio track settings
+          if (audioTrackEl) {
+            applyAudioTrackSettings(audioTrackEl, settings);
+          }
+        }
+
+        // Handle audio track changes
+        if (audioTrackChanged && !mediaChanged) {
+          loadAudioTrack(settings);
         }
 
         // Handle refresh interval change
@@ -492,11 +884,15 @@
 
       api.onEvent('visibility:change', ({ visible }) => {
         console.log(`[MediaViewer] Visibility changed: ${visible}`);
-        if (currentMediaEl?.tagName === 'VIDEO') {
+        const isPlayableMedia = currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO';
+
+        if (isPlayableMedia) {
           if (!visible && !currentMediaEl.paused) {
             currentMediaEl.pause();
+            if (audioTrackEl) audioTrackEl.pause();
           } else if (visible && api.config.autoplay && !isPaused) {
             currentMediaEl.play().catch(() => {});
+            if (audioTrackEl) audioTrackEl.play().catch(() => {});
           }
         }
       });
@@ -510,24 +906,45 @@
         if (refreshTimer) {
           clearInterval(refreshTimer);
         }
-        if (currentMediaEl?.tagName === 'VIDEO') {
+        if (currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO') {
           currentMediaEl.pause();
         }
+        if (audioTrackEl) {
+          audioTrackEl.pause();
+        }
+        // Clean up blob URLs to prevent memory leaks
+        for (const blobUrl of blobUrlCache.values()) {
+          URL.revokeObjectURL(blobUrl);
+        }
+        blobUrlCache.clear();
+        // Clean up received blobs from host
+        for (const blobUrl of receivedBlobs.values()) {
+          URL.revokeObjectURL(blobUrl);
+        }
+        receivedBlobs.clear();
       });
 
       api.onPause(() => {
         console.log('[MediaViewer] Paused');
         isPaused = true;
-        if (currentMediaEl?.tagName === 'VIDEO' && !currentMediaEl.paused) {
+        const isPlayableMedia = currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO';
+        if (isPlayableMedia && !currentMediaEl.paused) {
           currentMediaEl.pause();
+        }
+        if (audioTrackEl && !audioTrackEl.paused) {
+          audioTrackEl.pause();
         }
       });
 
       api.onResume(() => {
         console.log('[MediaViewer] Resumed');
         isPaused = false;
-        if (currentMediaEl?.tagName === 'VIDEO' && api.config.autoplay) {
+        const isPlayableMedia = currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO';
+        if (isPlayableMedia && api.config.autoplay) {
           currentMediaEl.play().catch(() => {});
+        }
+        if (audioTrackEl && api.config.autoplay) {
+          audioTrackEl.play().catch(() => {});
         }
       });
 
