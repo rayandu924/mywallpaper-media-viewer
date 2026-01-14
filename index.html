@@ -77,6 +77,12 @@
       /**
        * Request file access and get blob URL
        * Returns null if denied or not yet granted
+       *
+       * The host sends the Blob object itself (not a blob URL) because:
+       * - This iframe runs in about:srcdoc origin (null/opaque)
+       * - Blob URLs are origin-scoped and cannot be accessed cross-origin
+       * - We receive the Blob via structured clone algorithm
+       * - We create our own blob URL in our own context
        */
       async function requestFileAccess(settingKey, fileRef) {
         // Already granted?
@@ -102,10 +108,12 @@
               window.removeEventListener('message', handler);
               pendingRequests.delete(settingKey);
 
-              if (event.data.granted && event.data.blobUrl) {
-                console.log(`[MediaViewer] File access granted for ${settingKey}`);
-                grantedBlobUrls.set(settingKey, event.data.blobUrl);
-                resolve(event.data.blobUrl);
+              if (event.data.granted && event.data.blob instanceof Blob) {
+                // Create our own blob URL from the received Blob
+                const blobUrl = URL.createObjectURL(event.data.blob);
+                console.log(`[MediaViewer] File access granted for ${settingKey}, created blob URL: ${blobUrl.substring(0, 50)}...`);
+                grantedBlobUrls.set(settingKey, blobUrl);
+                resolve(blobUrl);
               } else {
                 console.log(`[MediaViewer] File access denied for ${settingKey}`);
                 resolve(null);
