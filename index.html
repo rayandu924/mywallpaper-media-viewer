@@ -101,6 +101,11 @@
         const requestPromise = new Promise((resolve) => {
           // Listen for FILE_ACCESS_RESPONSE
           const handler = (event) => {
+            // Debug: log all messages from host
+            if (event.data?.source === 'MyWallpaperHost') {
+              console.log('[MediaViewer] Received message from host:', event.data.type, event.data);
+            }
+
             if (event.data?.type === 'FILE_ACCESS_RESPONSE' &&
                 event.data?.source === 'MyWallpaperHost' &&
                 event.data?.settingKey === settingKey) {
@@ -108,12 +113,44 @@
               window.removeEventListener('message', handler);
               pendingRequests.delete(settingKey);
 
+              console.log('[MediaViewer] FILE_ACCESS_RESPONSE received:', {
+                granted: event.data.granted,
+                hasBlob: !!event.data.blob,
+                blobType: event.data.blob ? event.data.blob.constructor.name : 'N/A',
+                isBlob: event.data.blob instanceof Blob,
+                mimeType: event.data.mimeType,
+                size: event.data.size
+              });
+
               if (event.data.granted && event.data.blob instanceof Blob) {
                 // Create our own blob URL from the received Blob
                 const blobUrl = URL.createObjectURL(event.data.blob);
                 console.log(`[MediaViewer] File access granted for ${settingKey}, created blob URL: ${blobUrl.substring(0, 50)}...`);
                 grantedBlobUrls.set(settingKey, blobUrl);
                 resolve(blobUrl);
+                // Reload media now that we have the blob URL
+                if (api.config) {
+                  console.log('[MediaViewer] Reloading media after file access granted');
+                  loadMedia(api.config);
+                }
+              } else if (event.data.granted && event.data.blob) {
+                // Blob might not be detected as instanceof Blob in sandboxed context
+                // Try to create blob URL anyway
+                console.log('[MediaViewer] Blob not detected as instanceof Blob, trying anyway...');
+                try {
+                  const blobUrl = URL.createObjectURL(event.data.blob);
+                  console.log(`[MediaViewer] Successfully created blob URL: ${blobUrl.substring(0, 50)}...`);
+                  grantedBlobUrls.set(settingKey, blobUrl);
+                  resolve(blobUrl);
+                  // Reload media now that we have the blob URL
+                  if (api.config) {
+                    console.log('[MediaViewer] Reloading media after file access granted');
+                    loadMedia(api.config);
+                  }
+                } catch (e) {
+                  console.error('[MediaViewer] Failed to create blob URL:', e);
+                  resolve(null);
+                }
               } else {
                 console.log(`[MediaViewer] File access denied for ${settingKey}`);
                 resolve(null);
