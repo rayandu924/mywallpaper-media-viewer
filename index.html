@@ -28,7 +28,7 @@
 
   <script>
     // ==========================================================================
-    // Media Viewer Addon - MyWallpaper SDK v2.3
+    // Media Viewer Addon - MyWallpaper SDK v2.6
     // ==========================================================================
     // Supports: Images (jpg, png, gif, webp, svg, ico, bmp, avif)
     //           Videos (mp4, webm, ogg, mov)
@@ -56,27 +56,95 @@
       let isPaused = false;
 
       // ==========================================================================
-      // BLOB TRANSFER SUPPORT
+      // FILE ACCESS SUPPORT (NEW v2.6 API)
       // ==========================================================================
-      // The host sends FILE_BLOB messages containing actual Blob objects.
-      // We create blob URLs from these Blobs in our own context (even null-origin)
-      // and use them instead of the placeholder IDs in settings.
+      // Files are now sent as FileReference objects instead of data URLs.
+      // We must request access via api.files.request() which shows a user modal.
+
+      // Cache of granted blob URLs (settingKey -> blobUrl)
+      const grantedBlobUrls = new Map();
+
+      // Pending file access requests (settingKey -> Promise)
+      const pendingRequests = new Map();
+
+      /**
+       * Check if a value is a FileReference (new v2.6 format)
+       */
+      function isFileReference(value) {
+        return value && typeof value === 'object' && value.__type === 'file-reference';
+      }
+
+      /**
+       * Request file access and get blob URL
+       * Returns null if denied or not yet granted
+       */
+      async function requestFileAccess(settingKey, fileRef) {
+        // Already granted?
+        if (grantedBlobUrls.has(settingKey)) {
+          return grantedBlobUrls.get(settingKey);
+        }
+
+        // Already requesting?
+        if (pendingRequests.has(settingKey)) {
+          return pendingRequests.get(settingKey);
+        }
+
+        console.log(`[MediaViewer] Requesting file access for ${settingKey}: ${fileRef.filename}`);
+
+        // Create promise for this request
+        const requestPromise = new Promise((resolve) => {
+          // Listen for FILE_ACCESS_RESPONSE
+          const handler = (event) => {
+            if (event.data?.type === 'FILE_ACCESS_RESPONSE' &&
+                event.data?.source === 'MyWallpaperHost' &&
+                event.data?.settingKey === settingKey) {
+
+              window.removeEventListener('message', handler);
+              pendingRequests.delete(settingKey);
+
+              if (event.data.granted && event.data.blobUrl) {
+                console.log(`[MediaViewer] File access granted for ${settingKey}`);
+                grantedBlobUrls.set(settingKey, event.data.blobUrl);
+                resolve(event.data.blobUrl);
+              } else {
+                console.log(`[MediaViewer] File access denied for ${settingKey}`);
+                resolve(null);
+              }
+            }
+          };
+
+          window.addEventListener('message', handler);
+
+          // Send request to host
+          window.parent.postMessage({
+            type: 'FILE_ACCESS_REQUEST',
+            layerId: api.layerId,
+            settingKey: settingKey,
+            requestId: `${settingKey}-${Date.now()}`
+          }, '*');
+        });
+
+        pendingRequests.set(settingKey, requestPromise);
+        return requestPromise;
+      }
+
+      // ==========================================================================
+      // LEGACY BLOB TRANSFER SUPPORT (for backwards compatibility)
+      // ==========================================================================
+      // Keep support for old FILE_BLOB messages in case host hasn't updated
 
       const receivedBlobs = new Map();  // Map<placeholderId, blobUrl>
 
-      // Listen for FILE_BLOB messages from host
       window.addEventListener('message', (event) => {
+        // Legacy FILE_BLOB support
         if (event.data?.type === 'FILE_BLOB' && event.data?.source === 'MyWallpaperHost') {
           const { settingKey, placeholderId, blob, mimeType } = event.data;
 
           if (blob && blob instanceof Blob) {
-            // Create our own blob URL from the received Blob
             const blobUrl = URL.createObjectURL(blob);
             receivedBlobs.set(placeholderId, blobUrl);
-            console.log(`[MediaViewer] Received blob for ${settingKey}: ${blobUrl.substring(0, 50)}... (${blob.size} bytes, ${mimeType})`);
+            console.log(`[MediaViewer] Received legacy blob for ${settingKey}: ${blobUrl.substring(0, 50)}... (${blob.size} bytes, ${mimeType})`);
 
-            // If we're already loaded and waiting for this blob, trigger a reload
-            // Check if the current mediaFile/audioTrackFile matches this placeholder
             if (api.config) {
               const needsReload =
                 api.config.mediaFile === placeholderId ||
@@ -87,26 +155,32 @@
                 loadMedia(api.config);
               }
             }
-          } else {
-            console.warn('[MediaViewer] Received invalid blob for', settingKey);
           }
         }
       });
 
       /**
-       * Resolve a setting value - if it's a blob placeholder, return the actual blob URL
+       * Resolve a setting value to a usable URL
+       * Handles: FileReference, blob placeholders, and direct URLs
        */
-      function resolveSettingValue(value) {
+      async function resolveSettingValue(value, settingKey) {
+        // NEW: FileReference object (v2.6)
+        if (isFileReference(value)) {
+          return await requestFileAccess(settingKey, value);
+        }
+
+        // Legacy: blob placeholder string
         if (typeof value === 'string' && value.startsWith('__blob_')) {
           const blobUrl = receivedBlobs.get(value);
           if (blobUrl) {
-            console.log('[MediaViewer] Resolved placeholder to blob URL:', blobUrl.substring(0, 50));
+            console.log('[MediaViewer] Resolved legacy placeholder to blob URL');
             return blobUrl;
-          } else {
-            console.log('[MediaViewer] Waiting for blob:', value);
-            return null;  // Blob not yet received
           }
+          console.log('[MediaViewer] Waiting for legacy blob:', value);
+          return null;
         }
+
+        // Direct URL/data URL
         return value;
       }
 
@@ -593,12 +667,12 @@
       // MEDIA LOADING
       // ==========================================================================
 
-      function getMediaSource(settings) {
+      async function getMediaSource(settings) {
         // Use sourceType to determine which field to use
         switch (settings.sourceType) {
           case 'file':
-            // Resolve placeholder to actual blob URL if available
-            const fileUrl = resolveSettingValue(settings.mediaFile);
+            // Resolve placeholder/FileReference to actual blob URL
+            const fileUrl = await resolveSettingValue(settings.mediaFile, 'mediaFile');
             return { type: 'file', url: fileUrl || null };
           case 'url':
           default:
@@ -606,20 +680,20 @@
         }
       }
 
-      function getAudioTrackSource(settings) {
+      async function getAudioTrackSource(settings) {
         if (!settings.audioTrackEnabled) return null;
 
         switch (settings.audioTrackSourceType) {
           case 'file':
-            // Resolve placeholder to actual blob URL if available
-            return resolveSettingValue(settings.audioTrackFile) || null;
+            // Resolve placeholder/FileReference to actual blob URL
+            return await resolveSettingValue(settings.audioTrackFile, 'audioTrackFile') || null;
           case 'url':
           default:
             return settings.audioTrackUrl || null;
         }
       }
 
-      function loadAudioTrack(settings) {
+      async function loadAudioTrack(settings) {
         // Clean up existing audio track
         if (audioTrackEl) {
           audioTrackEl.pause();
@@ -628,7 +702,7 @@
           audioTrackEl = null;
         }
 
-        const audioUrl = getAudioTrackSource(settings);
+        const audioUrl = await getAudioTrackSource(settings);
         if (!audioUrl) return;
 
         const preparedUrl = prepareMediaUrl(audioUrl);
@@ -693,8 +767,10 @@
         });
       }
 
-      function loadMedia(settings) {
-        const source = getMediaSource(settings);
+      async function loadMedia(settings) {
+        showLoading();
+
+        const source = await getMediaSource(settings);
 
         console.log('[MediaViewer] loadMedia called, source:', {
           type: source.type,
@@ -702,12 +778,20 @@
           urlStart: source.url?.substring(0, 100) || 'null'
         });
 
-        // If we're waiting for a blob, show loading and wait
+        // If we're waiting for a file access response (FileReference)
         if (!source.url && source.type === 'file') {
           const rawValue = settings.mediaFile;
+
+          // FileReference - waiting for user to approve
+          if (isFileReference(rawValue)) {
+            console.log('[MediaViewer] Waiting for file access approval:', rawValue.filename);
+            showFallback('En attente d\'autorisation...');
+            return;
+          }
+
+          // Legacy blob placeholder
           if (rawValue && typeof rawValue === 'string' && rawValue.startsWith('__blob_')) {
-            console.log('[MediaViewer] Waiting for blob to arrive:', rawValue);
-            showLoading();
+            console.log('[MediaViewer] Waiting for legacy blob to arrive:', rawValue);
             return;  // Will be called again when blob arrives
           }
         }
@@ -727,8 +811,6 @@
           showFallback('File data is corrupted or too large');
           return;
         }
-
-        showLoading();
 
         // Clear previous media
         if (currentMediaEl) {
@@ -922,6 +1004,11 @@
           URL.revokeObjectURL(blobUrl);
         }
         receivedBlobs.clear();
+        // Clean up granted blob URLs from file access API (v2.6)
+        for (const blobUrl of grantedBlobUrls.values()) {
+          URL.revokeObjectURL(blobUrl);
+        }
+        grantedBlobUrls.clear();
       });
 
       api.onPause(() => {
