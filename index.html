@@ -556,6 +556,7 @@
         img.onerror = () => {
           console.error('[MediaViewer] Failed to load image:', url);
           showFallback(settings.fallbackText);
+          api.renderComplete(); // Signal done even on error
         };
 
         img.src = url;
@@ -600,6 +601,7 @@
           console.error('[MediaViewer] Failed to load video:', url.substring(0, 100) + '...', e);
           console.error('[MediaViewer] Video error code:', video.error?.code, 'message:', video.error?.message);
           showFallback(settings.fallbackText);
+          api.renderComplete(); // Signal done even on error
         };
 
         // Handle autoplay failures (browser restrictions)
@@ -745,6 +747,7 @@
           console.error('[MediaViewer] Failed to load audio:', url.substring(0, 100) + '...', e);
           console.error('[MediaViewer] Audio error code:', audio.error?.code, 'message:', audio.error?.message);
           showFallback(settings.fallbackText);
+          api.renderComplete(); // Signal done even on error
         };
 
         audio.onplay = () => {
@@ -808,6 +811,7 @@
         iframe.onerror = () => {
           console.error(`[MediaViewer] Failed to load ${embedData.platform} embed`);
           showFallback(`Failed to load ${embedData.platform} video`);
+          api.renderComplete(); // Signal done even on error
         };
 
         // Set src after setting up handlers
@@ -941,6 +945,7 @@
               if (!accessResult.granted) {
                 console.warn('[MediaViewer] Network access denied for:', domain);
                 showFallback('Network access denied');
+                api.renderComplete(); // Signal done even on error
                 return;
               }
 
@@ -975,6 +980,7 @@
             'url': 'No URL configured'
           };
           showFallback(messages[settings.sourceType] || 'No URL configured');
+          api.renderComplete(); // Signal done even with no media
           return;
         }
 
@@ -982,6 +988,7 @@
         if (source.url.length < 50 && source.url.startsWith('data:')) {
           console.error('[MediaViewer] Data URL appears truncated! Length:', source.url.length);
           showFallback('File data is corrupted or too large');
+          api.renderComplete(); // Signal done even on error
           return;
         }
 
@@ -1042,6 +1049,7 @@
           };
         } else {
           showFallback('Unsupported media type');
+          api.renderComplete(); // Signal done even on error
           return;
         }
 
