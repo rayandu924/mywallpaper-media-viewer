@@ -579,11 +579,36 @@
         video.playsInline = true;
         video.preload = 'auto';
 
+        // Track if we've already signaled render complete
+        let renderCompleted = false;
+        const signalRenderComplete = () => {
+          if (!renderCompleted) {
+            renderCompleted = true;
+            hideLoading();
+            hideFallback();
+            video.classList.remove('hidden');
+            api.renderComplete();
+            console.log('[MediaViewer] Video render complete signaled');
+          }
+        };
+
+        // Fallback timeout: signal render complete after 8s even if video not fully loaded
+        // This prevents blocking thumbnail generation for slow-loading videos
+        const loadTimeout = setTimeout(() => {
+          if (!renderCompleted) {
+            console.warn('[MediaViewer] Video load timeout (8s), signaling render complete anyway');
+            signalRenderComplete();
+          }
+        }, 8000);
+
+        video.onloadedmetadata = () => {
+          // Metadata loaded - we know video dimensions, can show poster/first frame
+          console.log('[MediaViewer] Video metadata loaded');
+        };
+
         video.onloadeddata = () => {
-          hideLoading();
-          hideFallback();
-          video.classList.remove('hidden');
-          api.renderComplete();
+          clearTimeout(loadTimeout);
+          signalRenderComplete();
 
           // If user wants sound (not muted in settings), start parent audio
           if (!settings.muted) {
@@ -592,6 +617,7 @@
         };
 
         video.onerror = (e) => {
+          clearTimeout(loadTimeout);
           // Ignore transient errors if video is actually loading or has a source
           // networkState: 0=EMPTY, 1=IDLE, 2=LOADING, 3=NO_SOURCE
           // readyState: 0=HAVE_NOTHING, 1+=has data
