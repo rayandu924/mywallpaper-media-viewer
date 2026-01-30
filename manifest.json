@@ -1,8 +1,8 @@
 {
   "name": "Media Viewer",
-  "version": "2.3.0",
-  "sdkVersion": "2.8.1",
-  "description": "Universal media display widget supporting images, videos, audio files, GIFs, and video platforms (YouTube, Vimeo, Twitch, Dailymotion). Includes volume control and audio track overlay.",
+  "version": "2.3.1",
+  "sdkVersion": "2.8.0",
+  "description": "Universal media display widget supporting images, videos, audio files, GIFs, and video platforms (YouTube, Vimeo, Twitch, Dailymotion).",
   "author": "MyWallpaper Community",
   "categories": ["media", "utilities", "display"],
   "icon": "icon.svg",
@@ -114,8 +114,8 @@
     "muted": {
       "type": "boolean",
       "label": "Muted",
-      "description": "Play without sound",
-      "default": false
+      "description": "Play without sound (required for autoplay in most browsers)",
+      "default": true
     },
     "volume": {
       "type": "range",
@@ -140,41 +140,6 @@
       "max": 2,
       "step": 0.25,
       "default": 1
-    },
-    "audioSection": {
-      "type": "section",
-      "label": "Audio Track (Optional)"
-    },
-    "audioTrackEnabled": {
-      "type": "boolean",
-      "label": "Enable Audio Track",
-      "description": "Play a separate audio file alongside the video (for silent videos)",
-      "default": false
-    },
-    "audioTrackSourceType": {
-      "type": "select",
-      "label": "Audio Source",
-      "description": "Choose how to provide the audio track",
-      "default": "url",
-      "options": [
-        { "value": "url", "label": "From URL" },
-        { "value": "file", "label": "Upload File" }
-      ],
-      "showIf": { "setting": "audioTrackEnabled", "equals": true }
-    },
-    "audioTrackUrl": {
-      "type": "string",
-      "label": "Audio URL",
-      "description": "Direct link to audio file (mp3, wav, ogg, etc.)",
-      "default": "",
-      "placeholder": "https://example.com/audio.mp3",
-      "showIf": { "setting": "audioTrackSourceType", "equals": "url" }
-    },
-    "audioTrackFile": {
-      "type": "file",
-      "label": "Upload Audio",
-      "description": "Upload a local audio file",
-      "showIf": { "setting": "audioTrackSourceType", "equals": "file" }
     },
     "effectsSection": {
       "type": "section",
