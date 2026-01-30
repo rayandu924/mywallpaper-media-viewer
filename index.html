@@ -43,7 +43,8 @@
     (function() {
       'use strict';
 
-      const api = window.MyWallpaper;
+      // Get API reference (may be injected later)
+      let api = window.MyWallpaper;
 
       // DOM Elements
       const container = document.getElementById('container');
@@ -1205,12 +1206,29 @@
       // INITIALIZATION
       // ==========================================================================
 
-      function init() {
-        console.log('[MediaViewer] Initializing...');
+      async function init() {
+        // Refresh API reference (in case it was injected after script load)
+        api = window.MyWallpaper;
 
-        // Apply initial settings
-        loadMedia(api.config);
-        setupRefreshTimer(api.config.refreshInterval);
+        console.log('[MediaViewer] Initializing...', { hasApi: !!api, hasConfig: !!(api && api.config) });
+
+        if (!api) {
+          console.error('[MediaViewer] SDK not available!');
+          return;
+        }
+
+        if (!api.config) {
+          console.error('[MediaViewer] No config available!');
+        }
+
+        try {
+          // Apply initial settings and WAIT for media to load
+          await loadMedia(api.config || {});
+          setupRefreshTimer((api.config || {}).refreshInterval);
+        } catch (e) {
+          console.error('[MediaViewer] Error loading media:', e);
+          api.renderComplete(); // Signal done even on error
+        }
 
         // Signal ready
         api.ready({
@@ -1221,7 +1239,13 @@
         console.log('[MediaViewer] Ready! SDK v' + api.version);
       }
 
-      init();
+      // Wait for SDK if not available yet
+      if (window.MyWallpaper) {
+        init();
+      } else {
+        console.log('[MediaViewer] Waiting for SDK...');
+        window.addEventListener('mywallpaper:ready', init);
+      }
 
     })();
   </script>
