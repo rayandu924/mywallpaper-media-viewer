@@ -543,19 +543,33 @@
         let pollingInterval = null;
 
         const handleLoad = () => {
-          if (loadHandled) return;
+          if (loadHandled) {
+            console.log('[MediaViewer] handleLoad already called, skipping');
+            return;
+          }
           // Check if this image is still in the DOM (not replaced by another loadMedia call)
-          if (!img.parentNode && !mediaWrapper.contains(img)) {
-            console.log('[MediaViewer] Image no longer in DOM, skipping handleLoad');
-            if (pollingInterval) clearInterval(pollingInterval);
+          if (!img.parentNode) {
+            console.log('[MediaViewer] Image not in DOM yet, deferring handleLoad');
+            // Defer to next tick - image might be about to be appended
+            setTimeout(() => {
+              if (!loadHandled && img.parentNode) {
+                handleLoad();
+              } else if (!loadHandled) {
+                console.log('[MediaViewer] Image still not in DOM, giving up');
+              }
+            }, 10);
             return;
           }
           loadHandled = true;
           if (pollingInterval) clearInterval(pollingInterval);
-          console.log('[MediaViewer] Image loaded successfully');
+          console.log('[MediaViewer] Image loaded successfully, dimensions:', img.naturalWidth, 'x', img.naturalHeight);
           hideLoading();
           hideFallback();
           img.classList.remove('hidden');
+          // Force visibility in case CSS is hiding it
+          img.style.visibility = 'visible';
+          img.style.opacity = '';  // Clear any inline opacity so applyStyles can set it
+          console.log('[MediaViewer] Image visible, classList:', img.className, 'parent:', img.parentNode?.id);
           api.renderComplete();
         };
 
@@ -991,10 +1005,23 @@
         }
       }
 
+      // Guard to prevent race conditions when multiple loadMedia calls overlap
+      let loadMediaVersion = 0;
+
       async function loadMedia(settings) {
+        // Increment version - any older loadMedia call should abort
+        const thisVersion = ++loadMediaVersion;
+        console.log('[MediaViewer] loadMedia started, version:', thisVersion);
+
         showLoading();
 
         const source = await getMediaSource(settings);
+
+        // Check if a newer loadMedia was started while we were waiting
+        if (thisVersion !== loadMediaVersion) {
+          console.log('[MediaViewer] loadMedia aborted (newer call started), version:', thisVersion, 'current:', loadMediaVersion);
+          return;
+        }
 
         console.log('[MediaViewer] loadMedia called, source:', {
           type: source.type,
