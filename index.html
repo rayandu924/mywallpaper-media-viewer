@@ -547,20 +547,58 @@
         img.alt = 'Media content';
         img.draggable = false;
 
-        img.onload = () => {
+        let loadHandled = false;
+
+        const handleLoad = () => {
+          if (loadHandled) return;
+          loadHandled = true;
+          console.log('[MediaViewer] Image loaded successfully');
           hideLoading();
           hideFallback();
           img.classList.remove('hidden');
           api.renderComplete();
         };
 
+        img.onload = handleLoad;
+
         img.onerror = () => {
+          if (loadHandled) return;
+          loadHandled = true;
           console.error('[MediaViewer] Failed to load image:', url);
           showFallback(settings.fallbackText);
           api.renderComplete(); // Signal done even on error
         };
 
         img.src = url;
+
+        // Fallback for blob:null URLs where onload may not fire in sandboxed iframes
+        // Check if image is already complete (cached or blob URL quirk)
+        if (img.complete && img.naturalWidth > 0) {
+          console.log('[MediaViewer] Image already complete (sync load)');
+          handleLoad();
+        } else if (url.startsWith('blob:null')) {
+          // For blob:null URLs, poll for image completion as onload is unreliable
+          const checkComplete = setInterval(() => {
+            if (loadHandled) {
+              clearInterval(checkComplete);
+              return;
+            }
+            if (img.complete && img.naturalWidth > 0) {
+              console.log('[MediaViewer] Image loaded (detected via polling)');
+              clearInterval(checkComplete);
+              handleLoad();
+            }
+          }, 50);
+
+          // Stop polling after 5 seconds
+          setTimeout(() => {
+            clearInterval(checkComplete);
+            if (!loadHandled && img.complete && img.naturalWidth > 0) {
+              handleLoad();
+            }
+          }, 5000);
+        }
+
         return img;
       }
 
