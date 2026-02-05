@@ -155,11 +155,7 @@
                 console.log(`[MediaViewer] File access granted for ${settingKey}, created blob URL: ${blobUrl.substring(0, 50)}..., mimeType: ${mimeType}`);
                 grantedBlobUrls.set(settingKey, { blobUrl, mimeType, fileId: newFileId });
                 resolve({ blobUrl, mimeType });
-                // Reload media now that we have the blob URL
-                if (api.config) {
-                  console.log('[MediaViewer] Reloading media after file access granted');
-                  loadMedia(api.config);
-                }
+                // Note: Don't call loadMedia here - the caller is awaiting the promise and will continue
               } else if (event.data.granted && event.data.blob) {
                 // Blob might not be detected as instanceof Blob in sandboxed context
                 // Try to create blob URL anyway
@@ -170,11 +166,7 @@
                   console.log(`[MediaViewer] Successfully created blob URL: ${blobUrl.substring(0, 50)}..., mimeType: ${mimeType}`);
                   grantedBlobUrls.set(settingKey, { blobUrl, mimeType, fileId: newFileId });
                   resolve({ blobUrl, mimeType });
-                  // Reload media now that we have the blob URL
-                  if (api.config) {
-                    console.log('[MediaViewer] Reloading media after file access granted');
-                    loadMedia(api.config);
-                  }
+                  // Note: Don't call loadMedia here - the caller is awaiting the promise and will continue
                 } catch (e) {
                   console.error('[MediaViewer] Failed to create blob URL:', e);
                   resolve(null);
@@ -548,10 +540,18 @@
         img.draggable = false;
 
         let loadHandled = false;
+        let pollingInterval = null;
 
         const handleLoad = () => {
           if (loadHandled) return;
+          // Check if this image is still in the DOM (not replaced by another loadMedia call)
+          if (!img.parentNode && !mediaWrapper.contains(img)) {
+            console.log('[MediaViewer] Image no longer in DOM, skipping handleLoad');
+            if (pollingInterval) clearInterval(pollingInterval);
+            return;
+          }
           loadHandled = true;
+          if (pollingInterval) clearInterval(pollingInterval);
           console.log('[MediaViewer] Image loaded successfully');
           hideLoading();
           hideFallback();
@@ -563,6 +563,7 @@
 
         img.onerror = () => {
           if (loadHandled) return;
+          if (pollingInterval) clearInterval(pollingInterval);
           loadHandled = true;
           console.error('[MediaViewer] Failed to load image:', url);
           showFallback(settings.fallbackText);
@@ -575,25 +576,31 @@
         // Check if image is already complete (cached or blob URL quirk)
         if (img.complete && img.naturalWidth > 0) {
           console.log('[MediaViewer] Image already complete (sync load)');
-          handleLoad();
-        } else if (url.startsWith('blob:null')) {
-          // For blob:null URLs, poll for image completion as onload is unreliable
-          const checkComplete = setInterval(() => {
-            if (loadHandled) {
-              clearInterval(checkComplete);
+          // Use setTimeout to ensure img is appended to DOM first
+          setTimeout(() => handleLoad(), 0);
+        } else if (url.startsWith('blob:')) {
+          // For blob URLs (including blob:null), poll for image completion as onload is unreliable
+          pollingInterval = setInterval(() => {
+            if (loadHandled || !img.parentNode) {
+              clearInterval(pollingInterval);
+              pollingInterval = null;
               return;
             }
             if (img.complete && img.naturalWidth > 0) {
               console.log('[MediaViewer] Image loaded (detected via polling)');
-              clearInterval(checkComplete);
+              clearInterval(pollingInterval);
+              pollingInterval = null;
               handleLoad();
             }
           }, 50);
 
           // Stop polling after 5 seconds
           setTimeout(() => {
-            clearInterval(checkComplete);
-            if (!loadHandled && img.complete && img.naturalWidth > 0) {
+            if (pollingInterval) {
+              clearInterval(pollingInterval);
+              pollingInterval = null;
+            }
+            if (!loadHandled && img.parentNode && img.complete && img.naturalWidth > 0) {
               handleLoad();
             }
           }, 5000);
