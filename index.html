@@ -148,29 +148,33 @@
                 size: event.data.size
               });
 
-              if (event.data.granted && event.data.blob instanceof Blob) {
-                // Create our own blob URL from the received Blob
-                const blobUrl = URL.createObjectURL(event.data.blob);
-                const mimeType = event.data.mimeType || event.data.blob.type || '';
-                console.log(`[MediaViewer] File access granted for ${settingKey}, created blob URL: ${blobUrl.substring(0, 50)}..., mimeType: ${mimeType}`);
-                grantedBlobUrls.set(settingKey, { blobUrl, mimeType, fileId: newFileId });
-                resolve({ blobUrl, mimeType });
-                // Note: Don't call loadMedia here - the caller is awaiting the promise and will continue
-              } else if (event.data.granted && event.data.blob) {
-                // Blob might not be detected as instanceof Blob in sandboxed context
-                // Try to create blob URL anyway
-                console.log('[MediaViewer] Blob not detected as instanceof Blob, trying anyway...');
-                try {
-                  const blobUrl = URL.createObjectURL(event.data.blob);
-                  const mimeType = event.data.mimeType || '';
-                  console.log(`[MediaViewer] Successfully created blob URL: ${blobUrl.substring(0, 50)}..., mimeType: ${mimeType}`);
-                  grantedBlobUrls.set(settingKey, { blobUrl, mimeType, fileId: newFileId });
-                  resolve({ blobUrl, mimeType });
-                  // Note: Don't call loadMedia here - the caller is awaiting the promise and will continue
-                } catch (e) {
-                  console.error('[MediaViewer] Failed to create blob URL:', e);
-                  resolve(null);
-                }
+              if (event.data.granted && (event.data.blob instanceof Blob || event.data.blob)) {
+                const blob = event.data.blob;
+                const mimeType = event.data.mimeType || blob.type || '';
+                console.log(`[MediaViewer] File access granted for ${settingKey}, converting blob to data URL...`);
+
+                // Convert blob to data URL - this works in sandboxed iframes unlike blob:null URLs
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const dataUrl = reader.result;
+                  console.log(`[MediaViewer] Converted to data URL (${dataUrl.length} chars), mimeType: ${mimeType}`);
+                  grantedBlobUrls.set(settingKey, { blobUrl: dataUrl, mimeType, fileId: newFileId });
+                  resolve({ blobUrl: dataUrl, mimeType });
+                };
+                reader.onerror = () => {
+                  console.error('[MediaViewer] Failed to convert blob to data URL:', reader.error);
+                  // Fallback to blob URL
+                  try {
+                    const blobUrl = URL.createObjectURL(blob);
+                    console.log(`[MediaViewer] Fallback to blob URL: ${blobUrl.substring(0, 50)}...`);
+                    grantedBlobUrls.set(settingKey, { blobUrl, mimeType, fileId: newFileId });
+                    resolve({ blobUrl, mimeType });
+                  } catch (e) {
+                    console.error('[MediaViewer] Failed to create blob URL:', e);
+                    resolve(null);
+                  }
+                };
+                reader.readAsDataURL(blob);
               } else {
                 console.log(`[MediaViewer] File access denied for ${settingKey}`);
                 resolve(null);
