@@ -301,6 +301,7 @@
           hideLoading();
           hideFallback();
           img.classList.remove('hidden');
+          console.log('[MediaViewer] Image handleLoad → applying styles, objectFit:', settings.objectFit, 'objectPosition:', settings.objectPosition);
           applyStyles(img, settings);
           api.renderComplete();
         };
@@ -363,6 +364,7 @@
 
         video.onloadeddata = () => {
           clearTimeout(loadTimeout);
+          console.log('[MediaViewer] Video onloadeddata → applying styles, objectFit:', settings.objectFit, 'objectPosition:', settings.objectPosition);
           applyStyles(video, settings);
           signalRenderComplete();
 
@@ -571,13 +573,28 @@
       // ==========================================================================
 
       function applyStyles(element, settings) {
-        if (!element) return;
+        if (!element) {
+          console.warn('[MediaViewer] applyStyles called with null element');
+          return;
+        }
 
-        element.style.objectFit = settings.objectFit || 'contain';
-        element.style.objectPosition = settings.objectPosition || 'center';
+        const fit = settings.objectFit || 'contain';
+        const pos = settings.objectPosition || 'center';
+        element.style.objectFit = fit;
+        element.style.objectPosition = pos;
         element.style.opacity = (settings.opacity ?? 100) / 100;
         element.style.filter = buildFilterString(settings);
         element.style.borderRadius = `${settings.borderRadius || 0}px`;
+
+        // Debug: verify styles were actually applied
+        const computed = window.getComputedStyle(element);
+        console.log('[MediaViewer] applyStyles →', {
+          tag: element.tagName,
+          objectFit: { requested: fit, inline: element.style.objectFit, computed: computed.objectFit },
+          objectPosition: { requested: pos, inline: element.style.objectPosition, computed: computed.objectPosition },
+          dimensions: { w: computed.width, h: computed.height },
+          inDOM: !!element.parentNode
+        });
       }
 
       function applyContainerStyles(settings) {
@@ -784,7 +801,11 @@
       // ==========================================================================
 
       api.onSettingsChange((settings, changedKeys) => {
-        console.log('[MediaViewer] Settings changed:', changedKeys);
+        console.log('[MediaViewer] Settings changed:', changedKeys, {
+          objectFit: settings.objectFit,
+          objectPosition: settings.objectPosition,
+          currentMediaEl: currentMediaEl?.tagName || 'null'
+        });
 
         // Check if media source changed
         const mediaChanged = changedKeys.includes('mediaUrl') ||
@@ -796,7 +817,7 @@
           stopParentAudio();
           loadMedia(settings);
         } else {
-          // Apply style changes without reloading
+          console.log('[MediaViewer] Applying style changes (no media reload)');
           applyStyles(currentMediaEl, settings);
           applyContainerStyles(settings);
 
