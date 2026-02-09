@@ -28,7 +28,7 @@
 
   <script>
     // ==========================================================================
-    // Media Viewer Addon - MyWallpaper SDK v2.7
+    // Media Viewer Addon - MyWallpaper SDK v2.17.1
     // ==========================================================================
     // Supports: Images (jpg, png, gif, webp, svg, ico, bmp, avif)
     //           Videos (mp4, webm, ogg, mov)
@@ -36,8 +36,8 @@
     //           External URLs and uploaded files
     //           Video platforms (YouTube, Vimeo, Twitch, Dailymotion)
     //
-    // AUDIO PLAYBACK: Uses parent-managed audio API (api.audio) for video sound
-    // because sandboxed iframes cannot autoplay audio (browser security policy).
+    // File access via SDK api.files API (FileReference handling)
+    // Audio playback via parent-managed api.audio (sandbox restrictions)
     // ==========================================================================
 
     (function() {
@@ -60,200 +60,23 @@
       let audioUnsubscribe = null;  // Unsubscribe function for audio state listener
       let usingParentAudio = false; // Whether we're using parent-managed audio
 
-      // ==========================================================================
-      // FILE ACCESS SUPPORT (NEW v2.6 API)
-      // ==========================================================================
-      // Files are now sent as FileReference objects instead of data URLs.
-      // We must request access via api.files.request() which shows a user modal.
-
-      // Cache of granted blob data (settingKey -> { blobUrl, mimeType, fileId })
-      const grantedBlobUrls = new Map();
-
-      // Pending file access requests (settingKey -> Promise)
-      const pendingRequests = new Map();
-
-      /**
-       * Check if a value is a FileReference (new v2.6 format)
-       */
-      function isFileReference(value) {
-        return value && typeof value === 'object' && value.__type === 'file-reference';
-      }
-
-      /**
-       * Get a unique identifier for a FileReference
-       */
-      function getFileRefId(fileRef) {
-        // Use id if available, otherwise fall back to filename + size
-        return fileRef.id || `${fileRef.filename}-${fileRef.size || 0}`;
-      }
-
-      /**
-       * Request file access and get blob URL
-       * Returns null if denied or not yet granted
-       *
-       * The host sends the Blob object itself (not a blob URL) because:
-       * - This iframe runs in about:srcdoc origin (null/opaque)
-       * - Blob URLs are origin-scoped and cannot be accessed cross-origin
-       * - We receive the Blob via structured clone algorithm
-       * - We create our own blob URL in our own context
-       */
-      async function requestFileAccess(settingKey, fileRef) {
-        const newFileId = getFileRefId(fileRef);
-
-        // Check if we have a cached entry for this setting
-        if (grantedBlobUrls.has(settingKey)) {
-          const cached = grantedBlobUrls.get(settingKey);
-
-          // If it's the same file, return cached blob URL
-          if (cached.fileId === newFileId) {
-            console.log(`[MediaViewer] Using cached blob URL for ${settingKey} (same file)`);
-            return { blobUrl: cached.blobUrl, mimeType: cached.mimeType };
-          }
-
-          // Different file - revoke old blob URL and clear cache
-          console.log(`[MediaViewer] File changed for ${settingKey}, revoking old blob URL`);
-          URL.revokeObjectURL(cached.blobUrl);
-          grantedBlobUrls.delete(settingKey);
-        }
-
-        // Already requesting?
-        if (pendingRequests.has(settingKey)) {
-          return pendingRequests.get(settingKey);
-        }
-
-        console.log(`[MediaViewer] Requesting file access for ${settingKey}: ${fileRef.filename}`);
-
-        // Create promise for this request
-        const requestPromise = new Promise((resolve) => {
-          // Listen for FILE_ACCESS_RESPONSE
-          const handler = (event) => {
-            // Debug: log all messages from host
-            if (event.data?.source === 'MyWallpaperHost') {
-              console.log('[MediaViewer] Received message from host:', event.data.type, event.data);
-            }
-
-            if (event.data?.type === 'FILE_ACCESS_RESPONSE' &&
-                event.data?.source === 'MyWallpaperHost' &&
-                event.data?.settingKey === settingKey) {
-
-              window.removeEventListener('message', handler);
-              pendingRequests.delete(settingKey);
-
-              console.log('[MediaViewer] FILE_ACCESS_RESPONSE received:', {
-                granted: event.data.granted,
-                hasBlob: !!event.data.blob,
-                blobType: event.data.blob ? event.data.blob.constructor.name : 'N/A',
-                isBlob: event.data.blob instanceof Blob,
-                mimeType: event.data.mimeType,
-                size: event.data.size
-              });
-
-              if (event.data.granted && (event.data.blob instanceof Blob || event.data.blob)) {
-                const blob = event.data.blob;
-                const mimeType = event.data.mimeType || blob.type || '';
-                console.log(`[MediaViewer] File access granted for ${settingKey}, converting blob to data URL...`);
-
-                // Convert blob to data URL - this works in sandboxed iframes unlike blob:null URLs
-                const reader = new FileReader();
-                reader.onload = () => {
-                  const dataUrl = reader.result;
-                  console.log(`[MediaViewer] Converted to data URL (${dataUrl.length} chars), mimeType: ${mimeType}`);
-                  grantedBlobUrls.set(settingKey, { blobUrl: dataUrl, mimeType, fileId: newFileId });
-                  resolve({ blobUrl: dataUrl, mimeType });
-                };
-                reader.onerror = () => {
-                  console.error('[MediaViewer] Failed to convert blob to data URL:', reader.error);
-                  // Fallback to blob URL
-                  try {
-                    const blobUrl = URL.createObjectURL(blob);
-                    console.log(`[MediaViewer] Fallback to blob URL: ${blobUrl.substring(0, 50)}...`);
-                    grantedBlobUrls.set(settingKey, { blobUrl, mimeType, fileId: newFileId });
-                    resolve({ blobUrl, mimeType });
-                  } catch (e) {
-                    console.error('[MediaViewer] Failed to create blob URL:', e);
-                    resolve(null);
-                  }
-                };
-                reader.readAsDataURL(blob);
-              } else {
-                console.log(`[MediaViewer] File access denied for ${settingKey}`);
-                resolve(null);
-              }
-            }
-          };
-
-          window.addEventListener('message', handler);
-
-          // Send request to host
-          window.parent.postMessage({
-            type: 'FILE_ACCESS_REQUEST',
-            layerId: api.layerId,
-            settingKey: settingKey,
-            requestId: `${settingKey}-${Date.now()}`
-          }, '*');
-        });
-
-        pendingRequests.set(settingKey, requestPromise);
-        return requestPromise;
-      }
-
-      // ==========================================================================
-      // LEGACY BLOB TRANSFER SUPPORT (for backwards compatibility)
-      // ==========================================================================
-      // Keep support for old FILE_BLOB messages in case host hasn't updated
-
-      const receivedBlobs = new Map();  // Map<placeholderId, blobUrl>
-
-      window.addEventListener('message', (event) => {
-        // Legacy FILE_BLOB support
-        if (event.data?.type === 'FILE_BLOB' && event.data?.source === 'MyWallpaperHost') {
-          const { settingKey, placeholderId, blob, mimeType } = event.data;
-
-          if (blob && blob instanceof Blob) {
-            const blobUrl = URL.createObjectURL(blob);
-            receivedBlobs.set(placeholderId, blobUrl);
-            console.log(`[MediaViewer] Received legacy blob for ${settingKey}: ${blobUrl.substring(0, 50)}... (${blob.size} bytes, ${mimeType})`);
-
-            if (api.config) {
-              const needsReload = api.config.mediaFile === placeholderId;
-
-              if (needsReload) {
-                console.log('[MediaViewer] Blob received for pending media, reloading...');
-                loadMedia(api.config);
-              }
-            }
-          }
-        }
-      });
-
       /**
        * Resolve a setting value to a usable URL with mimeType
-       * Handles: FileReference, blob placeholders, and direct URLs
+       * Handles: FileReference (via SDK api.files) and direct URLs
        * Returns: { url: string, mimeType: string } or null
        */
       async function resolveSettingValue(value, settingKey) {
-        // NEW: FileReference object (v2.6)
-        if (isFileReference(value)) {
-          const result = await requestFileAccess(settingKey, value);
-          if (result && result.blobUrl) {
-            return { url: result.blobUrl, mimeType: result.mimeType || '' };
+        // FileReference → SDK file access API
+        if (api.files && api.files.isFileReference(value)) {
+          const result = await api.files.request(settingKey);
+          if (result && result.granted && result.blobUrl) {
+            return { url: result.blobUrl, mimeType: '' };
           }
           return null;
         }
 
-        // Legacy: blob placeholder string
-        if (typeof value === 'string' && value.startsWith('__blob_')) {
-          const blobUrl = receivedBlobs.get(value);
-          if (blobUrl) {
-            console.log('[MediaViewer] Resolved legacy placeholder to blob URL');
-            return { url: blobUrl, mimeType: '' };
-          }
-          console.log('[MediaViewer] Waiting for legacy blob:', value);
-          return null;
-        }
-
-        // Direct URL/data URL - extract mimeType from data URL if possible
-        if (typeof value === 'string') {
+        // Direct URL/data URL
+        if (typeof value === 'string' && value.length > 0) {
           let mimeType = '';
           if (value.startsWith('data:')) {
             const match = value.match(/^data:([^;,]+)/);
@@ -269,85 +92,6 @@
       const VIDEO_EXTENSIONS = ['mp4', 'webm', 'ogg', 'mov', 'm4v', 'avi', 'mkv'];
       const IMAGE_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif', 'tiff'];
       const AUDIO_EXTENSIONS = ['mp3', 'wav', 'ogg', 'flac', 'aac', 'm4a', 'opus', 'weba', 'wma'];
-
-      // Cache for converted blob URLs to avoid memory leaks
-      const blobUrlCache = new Map();
-
-      /**
-       * Check if we're in a sandboxed context where blob URLs won't work
-       * In srcdoc iframes WITHOUT allow-same-origin, the origin is "null" and blob:null/... URLs fail
-       */
-      function isNullOrigin() {
-        try {
-          // If we can access window.origin and it's not 'null', we have same-origin
-          return window.origin === 'null' || window.location.origin === 'null';
-        } catch (e) {
-          // If we can't access, assume null origin
-          return true;
-        }
-      }
-
-      /**
-       * Convert data URL to Blob URL to bypass CSP restrictions
-       * CSP often allows blob: but blocks data: for media-src
-       * With allow-same-origin, blob URLs work properly
-       */
-      function dataUrlToBlobUrl(dataUrl) {
-        // Check if we're in null-origin context
-        const nullOrigin = isNullOrigin();
-        console.log('[MediaViewer] Origin check - isNullOrigin:', nullOrigin, 'window.origin:', window.origin);
-
-        // In null-origin contexts, blob URLs don't work - use data URL directly
-        // But this may fail for large videos!
-        if (nullOrigin) {
-          console.log('[MediaViewer] Null origin detected, using data URL directly (may fail for large files)');
-          return dataUrl;
-        }
-
-        // Check cache first
-        if (blobUrlCache.has(dataUrl)) {
-          return blobUrlCache.get(dataUrl);
-        }
-
-        try {
-          // Parse data URL
-          const [header, base64Data] = dataUrl.split(',');
-          const mimeMatch = header.match(/data:([^;]+)/);
-          if (!mimeMatch) return dataUrl;
-
-          const mimeType = mimeMatch[1];
-          const byteCharacters = atob(base64Data);
-          const byteNumbers = new Array(byteCharacters.length);
-
-          for (let i = 0; i < byteCharacters.length; i++) {
-            byteNumbers[i] = byteCharacters.charCodeAt(i);
-          }
-
-          const byteArray = new Uint8Array(byteNumbers);
-          const blob = new Blob([byteArray], { type: mimeType });
-          const blobUrl = URL.createObjectURL(blob);
-
-          // Cache it
-          blobUrlCache.set(dataUrl, blobUrl);
-          console.log('[MediaViewer] Converted data URL to blob URL:', blobUrl.substring(0, 50));
-
-          return blobUrl;
-        } catch (e) {
-          console.error('[MediaViewer] Failed to convert data URL to blob:', e);
-          return dataUrl;
-        }
-      }
-
-      /**
-       * Prepare URL for use - converts data URLs to blob URLs if needed
-       */
-      function prepareMediaUrl(url) {
-        if (!url) return null;
-        if (url.startsWith('data:')) {
-          return dataUrlToBlobUrl(url);
-        }
-        return url;
-      }
 
       // Embed platforms configuration
       const EMBED_PLATFORMS = {
@@ -544,52 +288,20 @@
         img.draggable = false;
 
         let loadHandled = false;
-        let pollingInterval = null;
 
         const handleLoad = () => {
-          if (loadHandled) {
-            console.log('[MediaViewer] handleLoad already called, skipping');
-            return;
-          }
-          // Check if this image is still in the DOM (not replaced by another loadMedia call)
+          if (loadHandled) return;
           if (!img.parentNode) {
-            console.log('[MediaViewer] Image not in DOM yet, deferring handleLoad');
-            // Defer to next tick - image might be about to be appended
             setTimeout(() => {
-              if (!loadHandled && img.parentNode) {
-                handleLoad();
-              } else if (!loadHandled) {
-                console.log('[MediaViewer] Image still not in DOM, giving up');
-              }
+              if (!loadHandled && img.parentNode) handleLoad();
             }, 10);
             return;
           }
           loadHandled = true;
-          if (pollingInterval) clearInterval(pollingInterval);
-          console.log('[MediaViewer] Image loaded successfully, dimensions:', img.naturalWidth, 'x', img.naturalHeight);
-
-          // Force hide loading and fallback
-          loadingEl.classList.add('hidden');
-          fallbackEl.classList.add('hidden');
-
-          // Force image visibility
+          hideLoading();
+          hideFallback();
           img.classList.remove('hidden');
-          img.style.display = 'block';
-          img.style.visibility = 'visible';
-
-          // Debug: log computed styles
-          const computedStyle = window.getComputedStyle(img);
-          console.log('[MediaViewer] Image styles:', {
-            display: computedStyle.display,
-            visibility: computedStyle.visibility,
-            opacity: computedStyle.opacity,
-            width: computedStyle.width,
-            height: computedStyle.height,
-            position: computedStyle.position
-          });
-          console.log('[MediaViewer] Fallback hidden:', fallbackEl.classList.contains('hidden'));
-          console.log('[MediaViewer] Loading hidden:', loadingEl.classList.contains('hidden'));
-
+          applyStyles(img, settings);
           api.renderComplete();
         };
 
@@ -597,47 +309,17 @@
 
         img.onerror = () => {
           if (loadHandled) return;
-          if (pollingInterval) clearInterval(pollingInterval);
           loadHandled = true;
           console.error('[MediaViewer] Failed to load image:', url);
           showFallback(settings.fallbackText);
-          api.renderComplete(); // Signal done even on error
+          api.renderComplete();
         };
 
         img.src = url;
 
-        // Fallback for blob:null URLs where onload may not fire in sandboxed iframes
-        // Check if image is already complete (cached or blob URL quirk)
+        // Handle synchronously cached images
         if (img.complete && img.naturalWidth > 0) {
-          console.log('[MediaViewer] Image already complete (sync load)');
-          // Use setTimeout to ensure img is appended to DOM first
           setTimeout(() => handleLoad(), 0);
-        } else if (url.startsWith('blob:')) {
-          // For blob URLs (including blob:null), poll for image completion as onload is unreliable
-          pollingInterval = setInterval(() => {
-            if (loadHandled || !img.parentNode) {
-              clearInterval(pollingInterval);
-              pollingInterval = null;
-              return;
-            }
-            if (img.complete && img.naturalWidth > 0) {
-              console.log('[MediaViewer] Image loaded (detected via polling)');
-              clearInterval(pollingInterval);
-              pollingInterval = null;
-              handleLoad();
-            }
-          }, 50);
-
-          // Stop polling after 5 seconds
-          setTimeout(() => {
-            if (pollingInterval) {
-              clearInterval(pollingInterval);
-              pollingInterval = null;
-            }
-            if (!loadHandled && img.parentNode && img.complete && img.naturalWidth > 0) {
-              handleLoad();
-            }
-          }, 5000);
         }
 
         return img;
@@ -667,7 +349,6 @@
             hideFallback();
             video.classList.remove('hidden');
             api.renderComplete();
-            console.log('[MediaViewer] Video render complete signaled');
           }
         };
 
@@ -680,16 +361,11 @@
           }
         }, 8000);
 
-        video.onloadedmetadata = () => {
-          // Metadata loaded - we know video dimensions, can show poster/first frame
-          console.log('[MediaViewer] Video metadata loaded');
-        };
-
         video.onloadeddata = () => {
           clearTimeout(loadTimeout);
+          applyStyles(video, settings);
           signalRenderComplete();
 
-          // If user wants sound (not muted in settings), start parent audio
           if (!settings.muted) {
             startParentAudio(settings);
           }
@@ -697,54 +373,29 @@
 
         video.onerror = (e) => {
           clearTimeout(loadTimeout);
-          // Ignore transient errors if video is actually loading or has a source
-          // networkState: 0=EMPTY, 1=IDLE, 2=LOADING, 3=NO_SOURCE
-          // readyState: 0=HAVE_NOTHING, 1+=has data
-          if (video.readyState > 0 || video.networkState === 2) {
-            console.warn('[MediaViewer] Video error (transient, still loading):', video.error?.message);
-            return;
-          }
-          console.error('[MediaViewer] Failed to load video:', url.substring(0, 100) + '...', e);
-          console.error('[MediaViewer] Video error code:', video.error?.code, 'message:', video.error?.message);
+          if (video.readyState > 0 || video.networkState === 2) return;
+          console.error('[MediaViewer] Failed to load video:', video.error?.code, video.error?.message);
           showFallback(settings.fallbackText);
-          api.renderComplete(); // Signal done even on error
+          api.renderComplete();
         };
 
-        // Handle autoplay failures (browser restrictions)
         video.onplay = () => {
-          console.log('[MediaViewer] Video playing');
-          // Sync audio when video plays
-          if (usingParentAudio) {
-            api.audio.resume();
-          }
+          if (usingParentAudio) api.audio.resume();
         };
 
         video.onpause = () => {
-          console.log('[MediaViewer] Video paused');
-          // Sync audio when video pauses
-          if (usingParentAudio && !video.ended) {
-            api.audio.pause();
-          }
+          if (usingParentAudio && !video.ended) api.audio.pause();
         };
 
         video.onseeked = () => {
-          // Sync audio position when user seeks in video
-          if (usingParentAudio) {
-            api.audio.seek(video.currentTime);
-          }
+          if (usingParentAudio) api.audio.seek(video.currentTime);
         };
 
         video.onended = () => {
-          console.log('[MediaViewer] Video ended');
-          if (usingParentAudio && !settings.loop) {
-            api.audio.stop();
-          }
+          if (usingParentAudio && !settings.loop) api.audio.stop();
         };
 
-        // For blob URLs and data URLs, set src directly (more reliable)
-        // For regular URLs, use source element with MIME type detection
         if (url.startsWith('data:') || url.startsWith('blob:')) {
-          console.log('[MediaViewer] Setting video.src directly for', url.startsWith('blob:') ? 'blob URL' : 'data URL');
           video.src = url;
         } else {
           const source = document.createElement('source');
@@ -779,7 +430,6 @@
        * The parent plays the same audio source and we sync playback
        */
       function startParentAudio(settings) {
-        console.log('[MediaViewer] Starting parent-managed audio');
         usingParentAudio = true;
 
         // Clean up previous listener
@@ -799,17 +449,11 @@
           startTime: currentMediaEl?.currentTime || 0
         });
 
-        // Listen for audio state changes to sync with video
         audioUnsubscribe = api.audio.onStateChange((state) => {
           if (!currentMediaEl || currentMediaEl.tagName !== 'VIDEO') return;
-
-          // Sync video position if audio drifts more than 0.3s
           if (state.status === 'playing') {
             const drift = Math.abs(currentMediaEl.currentTime - state.currentTime);
-            if (drift > 0.3) {
-              console.log('[MediaViewer] Syncing video to audio, drift:', drift.toFixed(2) + 's');
-              currentMediaEl.currentTime = state.currentTime;
-            }
+            if (drift > 0.3) currentMediaEl.currentTime = state.currentTime;
           }
         });
       }
@@ -819,7 +463,6 @@
        */
       function stopParentAudio() {
         if (usingParentAudio) {
-          console.log('[MediaViewer] Stopping parent-managed audio');
           api.audio.stop();
           usingParentAudio = false;
           if (audioUnsubscribe) {
@@ -849,21 +492,13 @@
           api.renderComplete();
         };
 
-        audio.onerror = (e) => {
-          console.error('[MediaViewer] Failed to load audio:', url.substring(0, 100) + '...', e);
-          console.error('[MediaViewer] Audio error code:', audio.error?.code, 'message:', audio.error?.message);
+        audio.onerror = () => {
+          console.error('[MediaViewer] Failed to load audio:', audio.error?.code, audio.error?.message);
           showFallback(settings.fallbackText);
-          api.renderComplete(); // Signal done even on error
+          api.renderComplete();
         };
 
-        audio.onplay = () => {
-          console.log('[MediaViewer] Audio playing');
-        };
-
-        // For blob URLs and data URLs, set src directly (more reliable)
-        // For regular URLs, use source element with MIME type detection
         if (url.startsWith('data:') || url.startsWith('blob:')) {
-          console.log('[MediaViewer] Setting audio.src directly for', url.startsWith('blob:') ? 'blob URL' : 'data URL');
           audio.src = url;
         } else {
           const source = document.createElement('source');
@@ -911,7 +546,6 @@
           hideLoading();
           hideFallback();
           api.renderComplete();
-          console.log(`[MediaViewer] ${embedData.platform} embed loaded`);
         };
 
         iframe.onerror = () => {
@@ -1029,67 +663,28 @@
       let loadMediaVersion = 0;
 
       async function loadMedia(settings) {
-        // Increment version - any older loadMedia call should abort
         const thisVersion = ++loadMediaVersion;
-        console.log('[MediaViewer] loadMedia started, version:', thisVersion);
 
         showLoading();
 
         const source = await getMediaSource(settings);
 
-        // Check if a newer loadMedia was started while we were waiting
-        if (thisVersion !== loadMediaVersion) {
-          console.log('[MediaViewer] loadMedia aborted (newer call started), version:', thisVersion, 'current:', loadMediaVersion);
-          return;
-        }
-
-        console.log('[MediaViewer] loadMedia called, source:', {
-          type: source.type,
-          urlLength: source.url?.length || 0,
-          urlStart: source.url?.substring(0, 100) || 'null',
-          mimeType: source.mimeType || 'none'
-        });
+        if (thisVersion !== loadMediaVersion) return;
 
         // Request network permission for external URLs
         if (source.type === 'url' && source.url && !source.url.startsWith('data:') && !source.url.startsWith('blob:')) {
           try {
-            const urlObj = new URL(source.url);
-            const domain = urlObj.hostname;
-
-            console.log('[MediaViewer] Requesting network access for:', domain);
-
+            const domain = new URL(source.url).hostname;
             if (api.network && api.network.requestAccess) {
               const accessResult = await api.network.requestAccess(domain, `Load media from ${domain}`);
-
               if (!accessResult.granted) {
-                console.warn('[MediaViewer] Network access denied for:', domain);
                 showFallback('Network access denied');
-                api.renderComplete(); // Signal done even on error
+                api.renderComplete();
                 return;
               }
-
-              console.log('[MediaViewer] Network access granted for:', domain);
             }
           } catch (e) {
-            console.warn('[MediaViewer] Could not parse URL for network permission:', e);
-          }
-        }
-
-        // If we're waiting for a file access response (FileReference)
-        if (!source.url && source.type === 'file') {
-          const rawValue = settings.mediaFile;
-
-          // FileReference - waiting for user to approve
-          if (isFileReference(rawValue)) {
-            console.log('[MediaViewer] Waiting for file access approval:', rawValue.filename);
-            showFallback('En attente d\'autorisation...');
-            return;
-          }
-
-          // Legacy blob placeholder
-          if (rawValue && typeof rawValue === 'string' && rawValue.startsWith('__blob_')) {
-            console.log('[MediaViewer] Waiting for legacy blob to arrive:', rawValue);
-            return;  // Will be called again when blob arrives
+            // Invalid URL - continue anyway
           }
         }
 
@@ -1103,11 +698,10 @@
           return;
         }
 
-        // Check if URL is truncated or empty
+        // Check if data URL is truncated
         if (source.url.length < 50 && source.url.startsWith('data:')) {
-          console.error('[MediaViewer] Data URL appears truncated! Length:', source.url.length);
           showFallback('File data is corrupted or too large');
-          api.renderComplete(); // Signal done even on error
+          api.renderComplete();
           return;
         }
 
@@ -1123,14 +717,12 @@
           currentMediaEl = null;
         }
 
-        // Prepare URL (convert data: to blob: for CSP compatibility)
-        const mediaUrl = prepareMediaUrl(source.url);
+        const mediaUrl = source.url;
 
         // For URL sources, try to detect embed platforms first
         if (source.type === 'url') {
           const embedData = parseEmbedUrl(source.url, settings);
           if (embedData) {
-            console.log('[MediaViewer] Loading embed:', embedData.platform, embedData.videoId);
             currentMediaEl = createEmbedElement(embedData, settings);
             applyStyles(currentMediaEl, settings);
             applyContainerStyles(settings);
@@ -1139,9 +731,7 @@
           }
         }
 
-        // Handle direct media (images, videos, audio, uploaded files)
         const mediaType = getMediaType(source.url, source.mimeType);
-        console.log('[MediaViewer] Loading media:', mediaUrl.substring(0, 50) + '...', 'type:', mediaType, 'mimeType:', source.mimeType);
 
         if (mediaType === 'video') {
           currentMediaEl = createVideoElement(mediaUrl, settings, source.mimeType);
@@ -1185,10 +775,7 @@
 
         if (intervalMinutes > 0) {
           const intervalMs = intervalMinutes * 60 * 1000;
-          refreshTimer = setInterval(() => {
-            console.log('[MediaViewer] Auto-refreshing media');
-            loadMedia(api.config);
-          }, intervalMs);
+          refreshTimer = setInterval(() => loadMedia(api.config), intervalMs);
         }
       }
 
@@ -1232,18 +819,15 @@
         }
       });
 
-      api.onEvent('viewport:resize', ({ width, height }) => {
-        console.log(`[MediaViewer] Viewport resized: ${width}x${height}`);
+      api.onEvent('viewport:resize', () => {
         // Media elements auto-resize via CSS, no action needed
       });
 
       api.onEvent('theme:change', ({ theme }) => {
-        console.log(`[MediaViewer] Theme changed: ${theme}`);
         document.body.dataset.theme = theme;
       });
 
       api.onEvent('visibility:change', ({ visible }) => {
-        console.log(`[MediaViewer] Visibility changed: ${visible}`);
         const isPlayableMedia = currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO';
 
         if (isPlayableMedia) {
@@ -1263,39 +847,16 @@
         }
       });
 
-      api.onMount(() => {
-        console.log('[MediaViewer] Mounted');
-      });
-
       api.onUnmount(() => {
-        console.log('[MediaViewer] Unmounting - cleaning up');
-        if (refreshTimer) {
-          clearInterval(refreshTimer);
-        }
-        // Stop parent audio
+        if (refreshTimer) clearInterval(refreshTimer);
         stopParentAudio();
         if (currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO') {
           currentMediaEl.pause();
         }
-        // Clean up blob URLs to prevent memory leaks
-        for (const blobUrl of blobUrlCache.values()) {
-          URL.revokeObjectURL(blobUrl);
-        }
-        blobUrlCache.clear();
-        // Clean up received blobs from host
-        for (const blobUrl of receivedBlobs.values()) {
-          URL.revokeObjectURL(blobUrl);
-        }
-        receivedBlobs.clear();
-        // Clean up granted blob URLs from file access API (v2.6)
-        for (const { blobUrl } of grantedBlobUrls.values()) {
-          URL.revokeObjectURL(blobUrl);
-        }
-        grantedBlobUrls.clear();
+        if (api.files) api.files.revoke('mediaFile');
       });
 
       api.onPause(() => {
-        console.log('[MediaViewer] Paused');
         isPaused = true;
         const isPlayableMedia = currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO';
         if (isPlayableMedia && !currentMediaEl.paused) {
@@ -1308,7 +869,6 @@
       });
 
       api.onResume(() => {
-        console.log('[MediaViewer] Resumed');
         isPaused = false;
         const isPlayableMedia = currentMediaEl?.tagName === 'VIDEO' || currentMediaEl?.tagName === 'AUDIO';
         if (isPlayableMedia && api.config.autoplay) {
@@ -1325,43 +885,32 @@
       // ==========================================================================
 
       async function init() {
-        // Refresh API reference (in case it was injected after script load)
         api = window.MyWallpaper;
-
-        console.log('[MediaViewer] Initializing...', { hasApi: !!api, hasConfig: !!(api && api.config) });
 
         if (!api) {
           console.error('[MediaViewer] SDK not available!');
           return;
         }
 
-        if (!api.config) {
-          console.error('[MediaViewer] No config available!');
-        }
-
         try {
-          // Apply initial settings and WAIT for media to load
           await loadMedia(api.config || {});
           setupRefreshTimer((api.config || {}).refreshInterval);
         } catch (e) {
           console.error('[MediaViewer] Error loading media:', e);
-          api.renderComplete(); // Signal done even on error
+          api.renderComplete();
         }
 
-        // Signal ready
         api.ready({
           capabilities: ['hot-reload'],
           subscribedEvents: ['viewport:resize', 'theme:change', 'visibility:change']
         });
 
-        console.log('[MediaViewer] Ready! SDK v' + api.version);
+        console.log('[MediaViewer] Ready, SDK v' + api.version);
       }
 
-      // Wait for SDK if not available yet
       if (window.MyWallpaper) {
         init();
       } else {
-        console.log('[MediaViewer] Waiting for SDK...');
         window.addEventListener('mywallpaper:ready', init);
       }
 
