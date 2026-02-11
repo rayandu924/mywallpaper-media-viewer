@@ -1,6 +1,6 @@
 {
   "name": "Media Viewer",
-  "version": "3.0.3",
+  "version": "3.0.4",
   "sdkVersion": "2.17.1",
   "description": "Universal media display widget supporting images, videos, audio files, GIFs, and video platforms (YouTube, Vimeo, Twitch, Dailymotion).",
   "author": "MyWallpaper Community",
