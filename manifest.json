@@ -1,19 +1,33 @@
 {
   "name": "Media Viewer",
-  "version": "3.0.4",
-  "sdkVersion": "2.17.1",
+  "version": "3.1.0",
+  "sdkVersion": "2.1",
+  "renderMode": "native",
+  "entry": "index.js",
   "description": "Universal media display widget supporting images, videos, audio files, GIFs, and video platforms (YouTube, Vimeo, Twitch, Dailymotion).",
   "author": "MyWallpaper Community",
-  "categories": ["media", "utilities", "display"],
+  "categories": [
+    "media",
+    "utilities",
+    "display"
+  ],
   "icon": "icon.svg",
   "capabilities": {
     "hotReload": true,
-    "systemEvents": ["viewport:resize", "theme:change", "visibility:change"]
+    "systemEvents": [
+      "viewport:resize",
+      "theme:change",
+      "visibility:change"
+    ]
   },
   "permissions": {
-    "storage": { "quota": 256 },
+    "storage": {
+      "quota": 256
+    },
     "network": {
-      "domains": ["*"]
+      "domains": [
+        "*"
+      ]
     },
     "audio": true
   },
@@ -28,8 +42,14 @@
       "description": "Choose how to provide the media",
       "default": "url",
       "options": [
-        { "value": "url", "label": "From URL" },
-        { "value": "file", "label": "Upload File" }
+        {
+          "value": "url",
+          "label": "From URL"
+        },
+        {
+          "value": "file",
+          "label": "Upload File"
+        }
       ]
     },
     "mediaUrl": {
@@ -38,13 +58,19 @@
       "description": "Direct link to image/video/audio, or YouTube/Vimeo/Twitch/Dailymotion URL",
       "default": "",
       "placeholder": "https://youtube.com/watch?v=... or https://example.com/video.mp4",
-      "showIf": { "setting": "sourceType", "equals": "url" }
+      "showIf": {
+        "setting": "sourceType",
+        "equals": "url"
+      }
     },
     "mediaFile": {
       "type": "file",
       "label": "Upload Media",
       "description": "Upload a local image, video, or audio file",
-      "showIf": { "setting": "sourceType", "equals": "file" }
+      "showIf": {
+        "setting": "sourceType",
+        "equals": "file"
+      }
     },
     "displaySection": {
       "type": "section",
@@ -56,11 +82,26 @@
       "description": "How the media should fit within the widget",
       "default": "contain",
       "options": [
-        { "value": "contain", "label": "Fit (show all)" },
-        { "value": "cover", "label": "Cover (fill area)" },
-        { "value": "fill", "label": "Stretch" },
-        { "value": "none", "label": "Original Size" },
-        { "value": "scale-down", "label": "Scale Down Only" }
+        {
+          "value": "contain",
+          "label": "Fit (show all)"
+        },
+        {
+          "value": "cover",
+          "label": "Cover (fill area)"
+        },
+        {
+          "value": "fill",
+          "label": "Stretch"
+        },
+        {
+          "value": "none",
+          "label": "Original Size"
+        },
+        {
+          "value": "scale-down",
+          "label": "Scale Down Only"
+        }
       ]
     },
     "objectPosition": {
@@ -69,15 +110,42 @@
       "description": "Alignment when media doesn't fill the widget",
       "default": "center",
       "options": [
-        { "value": "center", "label": "Center" },
-        { "value": "top", "label": "Top" },
-        { "value": "bottom", "label": "Bottom" },
-        { "value": "left", "label": "Left" },
-        { "value": "right", "label": "Right" },
-        { "value": "top left", "label": "Top Left" },
-        { "value": "top right", "label": "Top Right" },
-        { "value": "bottom left", "label": "Bottom Left" },
-        { "value": "bottom right", "label": "Bottom Right" }
+        {
+          "value": "center",
+          "label": "Center"
+        },
+        {
+          "value": "top",
+          "label": "Top"
+        },
+        {
+          "value": "bottom",
+          "label": "Bottom"
+        },
+        {
+          "value": "left",
+          "label": "Left"
+        },
+        {
+          "value": "right",
+          "label": "Right"
+        },
+        {
+          "value": "top left",
+          "label": "Top Left"
+        },
+        {
+          "value": "top right",
+          "label": "Top Right"
+        },
+        {
+          "value": "bottom left",
+          "label": "Bottom Left"
+        },
+        {
+          "value": "bottom right",
+          "label": "Bottom Right"
+        }
       ]
     },
     "backgroundColor": {
@@ -217,7 +285,10 @@
       "max": 60,
       "step": 1,
       "default": 0,
-      "showIf": { "setting": "sourceType", "equals": "url" }
+      "showIf": {
+        "setting": "sourceType",
+        "equals": "url"
+      }
     }
   },
   "defaultLayout": {
